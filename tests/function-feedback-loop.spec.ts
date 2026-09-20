@@ -57,6 +57,7 @@ describe('repeated provider Function Calls', () => {
     '请汇报一下',
     '帮我汇报工作',
     '你查一下再告诉我吧。',
+    '嗯，你查一下再告诉我吧。',
     '现在什么进展？',
     '把结果告诉我',
   ])('treats “%s” as a read-only report request', (spoken) => {

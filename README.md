@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.20`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
+当前版本：`0.1.0-alpha.21`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
 
 新增全局右下角「电话 · 语音总管」入口。没有打开聊天也能先通话，再选择已有任务，或明确选择项目和 Agent 创建任务。选择对象后，用户的新工作进入该任务，运行中的补充使用 DSH 的 steer；只听汇报通过只读目录与终态查询，不启动 Agent。
 

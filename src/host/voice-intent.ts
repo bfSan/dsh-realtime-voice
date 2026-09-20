@@ -28,6 +28,7 @@ export function isReadOnlyReportIntent(text: string): boolean {
   const normalized = text
     .trim()
     .replaceAll(/[\s，。！？!?、,.；;：:]/g, '')
+    .replace(/^(?:(?:嗯|啊|呃|唔|那个))+/u, '')
     .replace(/[啊呀吧呢]+$/u, '')
   return READ_ONLY_REPORT_UTTERANCES.has(normalized)
 }
