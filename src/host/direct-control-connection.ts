@@ -246,7 +246,9 @@ export class DirectControlConnection {
       onApprovalResolved: (approval, outcome) => this.afterApprovalResolved(approval, outcome),
       onQuestionResolved: question => this.afterQuestionResolved(question),
     }, lease.state.interactionReceipts)
-    const offer = await this.issueOffer(buildVoiceInstructions(status))
+    const offer = await this.issueOffer(buildVoiceInstructions(status, undefined, {
+      stylePrompt: this.config.stylePrompt,
+    }))
     if (this.closed) return
 
     const backendCallbacks = this.backendCallbacks()
@@ -308,6 +310,8 @@ export class DirectControlConnection {
       endpoint.searchParams.set('model', this.config.model)
       const effectiveInstructions = instructions ?? buildVoiceInstructions(
         await new DshVoiceSession(this.ctx, this.hello!.target.sessionId).snapshot(),
+        undefined,
+        { stylePrompt: this.config.stylePrompt },
       )
       const offer: DirectMediaOffer = {
         offerId: randomUUID(),

@@ -6,7 +6,7 @@ export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_P
 export const VOICE_PROTOCOL_VERSION = 1 as const
 export const VOICE_ROUTE = '/plugins/realtime-voice/v1' as const
 export const VOICE_STATUS_ROUTE = '/plugins/realtime-voice/v1/status' as const
-export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.12' as const
+export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.13' as const
 
 export const INPUT_SAMPLE_RATE = 16_000 as const
 export const OUTPUT_SAMPLE_RATE = 24_000 as const
@@ -112,7 +112,12 @@ export interface VoiceReady {
   voiceSessionId: string
   serverSeq: number
   target: { sessionId: string; running: boolean }
-  provider: { id: 'dashscope'; model: string; voice: string; turnDetection: 'server_vad' | 'smart_turn' }
+  provider: {
+    id: 'dashscope'
+    model: string
+    voice: string
+    turnDetection: 'server_vad' | 'smart_turn' | 'smart_turn_v2'
+  }
   audio: {
     input: PcmAudioSpec
     output: PcmAudioSpec

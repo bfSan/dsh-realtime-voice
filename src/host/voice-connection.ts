@@ -37,6 +37,7 @@ import { ResponsePcmPacketizer } from './pcm-packetizer.ts'
 import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts'
 import { DshFunctionBridge } from './dsh-function-bridge.ts'
 import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.ts'
+import { ProgressAnnouncementGate } from './progress-gate.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
@@ -85,6 +86,7 @@ export class VoiceConnection {
   private helloTimer: ReturnType<typeof setTimeout>
   private hostEventsAbort: AbortController | undefined
   private readonly pendingAssistantByTurn = new Map<string, string>()
+  private readonly progressGate: ProgressAnnouncementGate
 
   constructor(
     private readonly ctx: Context,
@@ -94,6 +96,11 @@ export class VoiceConnection {
     private readonly onClosed: () => void,
     private readonly runtime: VoiceRuntime = new VoiceRuntime(),
   ) {
+    this.progressGate = new ProgressAnnouncementGate({
+      mode: config.progressReporting,
+      minIntervalMs: config.progressMinIntervalMs,
+      quietTaskMs: config.progressQuietTaskMs,
+    })
     this.helloTimer = setTimeout(() => this.fail('hello-timeout', '客户端未及时发送 voice.hello。', false), 10_000)
     socket.on('message', (data, isBinary) => {
       void this.receive(data, isBinary).catch((error: unknown) => {
@@ -253,7 +260,9 @@ export class VoiceConnection {
       )
       return
     }
-    const instructions = buildVoiceInstructions(status, this.continuity)
+    const instructions = buildVoiceInstructions(status, this.continuity, {
+      stylePrompt: this.config.stylePrompt,
+    })
     const provider = new DashScopeRealtime(this.config, credential.value, instructions, VOICE_FUNCTION_TOOLS, {
       onEvent: event => this.onProviderEvent(event),
     })
@@ -583,6 +592,7 @@ export class VoiceConnection {
         if (event.type === 'turn/start') {
           const data = event.data as Record<string, unknown>
           if (typeof data.turn === 'number') this.coordinator?.markTurnStarted(data.turn)
+          this.progressGate.markTurnStarted()
           this.dshTurnRunning = true
           this.refreshAgentWorkPending()
           this.sendState('agent-working')
@@ -602,10 +612,16 @@ export class VoiceConnection {
               running: true,
               summary: text.slice(0, 1_200),
             })
-            this.provider?.announceBackendEvent(
-              `backend_progress_${event.seq}`,
-              `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
-            )
+            // Assistant messages arrive step by step. Injecting every step
+            // turned one task into a dozen spoken interruptions, so only the
+            // gate's surviving key nodes become speech; the browser UI still
+            // receives every summary above.
+            if (this.progressGate.decide()) {
+              this.provider?.announceBackendEvent(
+                `backend_progress_${event.seq}`,
+                `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
+              )
+            }
           }
           continue
         }
@@ -631,6 +647,7 @@ export class VoiceConnection {
         this.pendingAssistantByTurn.delete(key)
         const reason = turnEndKind(data.reason)
         this.coordinator?.markTurnEnded(turn, reason)
+        this.progressGate.markTurnEnded()
         this.dshTurnRunning = false
         this.refreshAgentWorkPending()
         this.send({

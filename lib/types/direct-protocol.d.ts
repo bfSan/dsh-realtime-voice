@@ -101,6 +101,7 @@ export interface DirectMediaOffer {
                 input_audio_format: 'pcm';
                 output_audio_format: 'pcm';
                 max_history_turns: number;
+                enable_speech_emotion: boolean;
                 tools: readonly DirectFunctionTool[];
                 turn_detection: {
                     type: 'server_vad';
@@ -108,6 +109,8 @@ export interface DirectMediaOffer {
                     silence_duration_ms: number;
                 } | {
                     type: 'smart_turn';
+                } | {
+                    type: 'smart_turn_v2';
                 };
             };
         };

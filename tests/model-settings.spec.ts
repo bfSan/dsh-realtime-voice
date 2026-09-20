@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Config } from '../src/host/config.ts'
-import { REALTIME_VOICE_MODELS, REALTIME_VOICE_TURN_DETECTION } from '../src/models.ts'
+import {
+  DEFAULT_REALTIME_VOICE_VOICE,
+  isRealtimeVoiceVoice,
+  REALTIME_VOICE_MODELS,
+  REALTIME_VOICE_PROGRESS_REPORTING,
+  REALTIME_VOICE_TURN_DETECTION,
+  REALTIME_VOICE_VOICES,
+} from '../src/models.ts'
 import {
   decodeVoiceModelSettings,
   VoiceModelSettingsController,
@@ -13,6 +20,9 @@ describe('realtime voice model settings', () => {
     expect(new Config({}).model).toBe(REALTIME_VOICE_MODELS.plus)
     expect(new Config({}).turnDetection).toBe(REALTIME_VOICE_TURN_DETECTION.fast)
     expect(new Config({}).vadThreshold).toBe(0.35)
+    expect(new Config({}).progressReporting).toBe(REALTIME_VOICE_PROGRESS_REPORTING.keyOnly)
+    expect(new Config({}).progressMinIntervalMs).toBe(45_000)
+    expect(new Config({}).progressQuietTaskMs).toBe(20_000)
     expect(new Config({ model: REALTIME_VOICE_MODELS.flash }).model).toBe(REALTIME_VOICE_MODELS.flash)
     expect(() => new Config({ model: 'unrelated-model' as never })).toThrow()
   })
@@ -111,33 +121,167 @@ describe('realtime voice model settings', () => {
   })
 
   it('rejects malformed browser settings snapshots', () => {
-    expect(decodeVoiceModelSettings({ model: REALTIME_VOICE_MODELS.flash })).toEqual({
+    expect(decodeVoiceModelSettings({ model: REALTIME_VOICE_MODELS.flash })).toMatchObject({
       model: REALTIME_VOICE_MODELS.flash,
       turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      voice: DEFAULT_REALTIME_VOICE_VOICE,
+      vadThreshold: 0.35,
+      silenceDurationMs: 500,
+      maxHistoryTurns: 20,
+      enableSpeechEmotion: true,
+      progressReporting: REALTIME_VOICE_PROGRESS_REPORTING.keyOnly,
+      progressMinIntervalMs: 45_000,
+      progressQuietTaskMs: 20_000,
     })
     expect(decodeVoiceModelSettings({
       model: REALTIME_VOICE_MODELS.flash,
       turnDetection: REALTIME_VOICE_TURN_DETECTION.semantic,
-    })).toEqual({
+    })).toMatchObject({
       model: REALTIME_VOICE_MODELS.flash,
       turnDetection: REALTIME_VOICE_TURN_DETECTION.semantic,
+      progressReporting: REALTIME_VOICE_PROGRESS_REPORTING.keyOnly,
+      progressMinIntervalMs: 45_000,
+      progressQuietTaskMs: 20_000,
     })
     expect(decodeVoiceModelSettings({
       model: REALTIME_VOICE_MODELS.flash,
       turnDetection: 'unknown',
     })).toBeUndefined()
     expect(decodeVoiceModelSettings({ model: 'other' })).toBeUndefined()
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      progressReporting: 'sometimes',
+    })).toBeUndefined()
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      progressMinIntervalMs: -1,
+    })).toBeUndefined()
     expect(decodeVoiceModelSettings(null)).toBeUndefined()
+  })
+
+  it('persists the progress granularity and its two tuning knobs', async () => {
+    let snapshot = ready(REALTIME_VOICE_MODELS.plus)
+    const listeners = new Set<() => void>()
+    const scope = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: vi.fn(async (field: string, value: unknown) => {
+        snapshot = ready(snapshot.value!.model, snapshot.value!.turnDetection, {
+          ...snapshot.value,
+          [field]: value,
+        } as VoiceModelSettingsValue)
+        for (const listener of listeners) listener()
+      }),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    await controller.setProgressReporting(REALTIME_VOICE_PROGRESS_REPORTING.silent)
+    expect(scope.set).toHaveBeenCalledWith('progressReporting', REALTIME_VOICE_PROGRESS_REPORTING.silent)
+    expect(controller.getSnapshot().progressReporting).toBe(REALTIME_VOICE_PROGRESS_REPORTING.silent)
+
+    await controller.setProgressMinInterval(90_000)
+    expect(controller.getSnapshot().progressMinIntervalMs).toBe(90_000)
+
+    await controller.setProgressQuietTask(0)
+    expect(controller.getSnapshot().progressQuietTaskMs).toBe(0)
+    controller.dispose()
+  })
+
+  it('exposes the realtime voice, VAD and history tunables the service accepts', async () => {
+    let snapshot = ready(REALTIME_VOICE_MODELS.plus)
+    const listeners = new Set<() => void>()
+    const scope = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: vi.fn(async (field: string, value: unknown) => {
+        snapshot = ready(snapshot.value!.model, snapshot.value!.turnDetection, {
+          ...snapshot.value,
+          [field]: value,
+        } as VoiceModelSettingsValue)
+        for (const listener of listeners) listener()
+      }),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    expect(controller.getSnapshot()).toMatchObject({
+      voice: DEFAULT_REALTIME_VOICE_VOICE,
+      vadThreshold: 0.35,
+      silenceDurationMs: 500,
+      maxHistoryTurns: 20,
+      enableSpeechEmotion: true,
+    })
+
+    await controller.selectVoice('loongjohn')
+    expect(scope.set).toHaveBeenCalledWith('voice', 'loongjohn')
+    expect(controller.getSnapshot().voice).toBe('loongjohn')
+
+    await controller.setVadThreshold(0.6)
+    expect(controller.getSnapshot().vadThreshold).toBe(0.6)
+
+    await controller.setSilenceDuration(700)
+    expect(controller.getSnapshot().silenceDurationMs).toBe(700)
+
+    await controller.setMaxHistoryTurns(12)
+    expect(controller.getSnapshot().maxHistoryTurns).toBe(12)
+
+    await controller.setSpeechEmotion(false)
+    expect(scope.set).toHaveBeenCalledWith('enableSpeechEmotion', false)
+    expect(controller.getSnapshot().enableSpeechEmotion).toBe(false)
+    controller.dispose()
+  })
+
+  it('rejects out-of-range tunables instead of writing them', async () => {
+    const scope = {
+      getSnapshot: () => ready(REALTIME_VOICE_MODELS.plus),
+      subscribe: () => () => {},
+      set: vi.fn(),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    await controller.setVadThreshold(1.5)
+    await controller.setSilenceDuration(100)
+    await controller.setMaxHistoryTurns(99)
+    expect(scope.set).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('accepts smart_turn_v2 and rejects an unknown turn detection in a snapshot', () => {
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: 'smart_turn_v2',
+    })).toMatchObject({ turnDetection: 'smart_turn_v2' })
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: 'smart_turn_v3',
+    })).toBeUndefined()
   })
 })
 
 function ready(
   model: VoiceModelSettingsValue['model'],
   turnDetection: VoiceModelSettingsValue['turnDetection'] = REALTIME_VOICE_TURN_DETECTION.fast,
+  value?: VoiceModelSettingsValue,
 ): SettingsScopeSnapshot<VoiceModelSettingsValue> {
   return {
     status: 'ready',
-    value: { model, turnDetection },
+    value: value ?? { model, turnDetection },
     base: { model: REALTIME_VOICE_MODELS.plus, turnDetection: REALTIME_VOICE_TURN_DETECTION.fast },
     user: { model, turnDetection },
     revision: 1,

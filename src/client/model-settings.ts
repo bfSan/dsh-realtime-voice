@@ -5,16 +5,31 @@ import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import {
   DEFAULT_REALTIME_VOICE_MODEL,
+  DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
   DEFAULT_REALTIME_VOICE_TURN_DETECTION,
+  DEFAULT_REALTIME_VOICE_VOICE,
   isRealtimeVoiceModel,
+  isRealtimeVoiceProgressReporting,
   isRealtimeVoiceTurnDetection,
+  isRealtimeVoiceVoice,
   type RealtimeVoiceModel,
+  type RealtimeVoiceProgressReporting,
   type RealtimeVoiceTurnDetection,
+  type RealtimeVoiceVoice,
 } from '../models.ts'
 
 export interface VoiceModelSettingsValue {
   model: RealtimeVoiceModel
   turnDetection: RealtimeVoiceTurnDetection
+  voice?: RealtimeVoiceVoice
+  vadThreshold?: number
+  silenceDurationMs?: number
+  maxHistoryTurns?: number
+  enableSpeechEmotion?: boolean
+  stylePrompt?: string
+  progressReporting?: RealtimeVoiceProgressReporting
+  progressMinIntervalMs?: number
+  progressQuietTaskMs?: number
   apiKeyEnv?: string
 }
 
@@ -23,6 +38,15 @@ export interface VoiceModelSettingsSnapshot {
   writable: boolean
   model: RealtimeVoiceModel
   turnDetection: RealtimeVoiceTurnDetection
+  voice: RealtimeVoiceVoice
+  vadThreshold: number
+  silenceDurationMs: number
+  maxHistoryTurns: number
+  enableSpeechEmotion: boolean
+  stylePrompt: string
+  progressReporting: RealtimeVoiceProgressReporting
+  progressMinIntervalMs: number
+  progressQuietTaskMs: number
   saving: boolean
   error: string | undefined
   apiKeyRef: string
@@ -33,6 +57,12 @@ export interface VoiceModelSettingsSnapshot {
 }
 
 const DEFAULT_API_KEY_REF = 'DASHSCOPE_API_KEY'
+const DEFAULT_PROGRESS_MIN_INTERVAL_MS = 45_000
+const DEFAULT_PROGRESS_QUIET_TASK_MS = 20_000
+const DEFAULT_VAD_THRESHOLD = 0.35
+const DEFAULT_SILENCE_DURATION_MS = 500
+const DEFAULT_MAX_HISTORY_TURNS = 20
+const MAX_STYLE_PROMPT_LENGTH = 2_000
 
 /** Project one durable DSH settings namespace into an immediate two-model switch. */
 export class VoiceModelSettingsController implements HostObservable<VoiceModelSettingsSnapshot> {
@@ -41,6 +71,15 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     writable: false,
     model: DEFAULT_REALTIME_VOICE_MODEL,
     turnDetection: DEFAULT_REALTIME_VOICE_TURN_DETECTION,
+    voice: DEFAULT_REALTIME_VOICE_VOICE,
+    vadThreshold: DEFAULT_VAD_THRESHOLD,
+    silenceDurationMs: DEFAULT_SILENCE_DURATION_MS,
+    maxHistoryTurns: DEFAULT_MAX_HISTORY_TURNS,
+    enableSpeechEmotion: true,
+    stylePrompt: '',
+    progressReporting: DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
+    progressMinIntervalMs: DEFAULT_PROGRESS_MIN_INTERVAL_MS,
+    progressQuietTaskMs: DEFAULT_PROGRESS_QUIET_TASK_MS,
     saving: false,
     error: undefined,
     apiKeyRef: DEFAULT_API_KEY_REF,
@@ -106,6 +145,71 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     }
   }
 
+  async setProgressReporting(progressReporting: RealtimeVoiceProgressReporting): Promise<void> {
+    await this.writeSetting('progressReporting', progressReporting, 'DSH 没有接受该播报粒度。')
+  }
+
+  async selectVoice(voice: RealtimeVoiceVoice): Promise<void> {
+    await this.writeSetting('voice', voice, 'DSH 没有接受该音色。')
+  }
+
+  async setVadThreshold(vadThreshold: number): Promise<void> {
+    if (!Number.isFinite(vadThreshold) || vadThreshold < -1 || vadThreshold > 1) return
+    await this.writeSetting('vadThreshold', roundTo(vadThreshold, 2), 'DSH 没有接受该 VAD 灵敏度。')
+  }
+
+  async setSilenceDuration(silenceDurationMs: number): Promise<void> {
+    if (!Number.isInteger(silenceDurationMs) || silenceDurationMs < 200 || silenceDurationMs > 6_000) return
+    await this.writeSetting('silenceDurationMs', silenceDurationMs, 'DSH 没有接受该静音时长。')
+  }
+
+  async setMaxHistoryTurns(maxHistoryTurns: number): Promise<void> {
+    if (!Number.isInteger(maxHistoryTurns) || maxHistoryTurns < 1 || maxHistoryTurns > 50) return
+    await this.writeSetting('maxHistoryTurns', maxHistoryTurns, 'DSH 没有接受该历史轮数。')
+  }
+
+  async setSpeechEmotion(enableSpeechEmotion: boolean): Promise<void> {
+    await this.writeSetting('enableSpeechEmotion', enableSpeechEmotion, 'DSH 没有接受该情绪增强设置。')
+  }
+
+  async setStylePrompt(stylePrompt: string): Promise<void> {
+    const trimmed = stylePrompt.trim().slice(0, MAX_STYLE_PROMPT_LENGTH)
+    await this.writeSetting('stylePrompt', trimmed, 'DSH 没有接受该说话风格设置。')
+  }
+
+  async setProgressMinInterval(progressMinIntervalMs: number): Promise<void> {
+    if (!Number.isInteger(progressMinIntervalMs) || progressMinIntervalMs < 0 || progressMinIntervalMs > 600_000) return
+    await this.writeSetting('progressMinIntervalMs', progressMinIntervalMs, 'DSH 没有接受该播报间隔。')
+  }
+
+  async setProgressQuietTask(progressQuietTaskMs: number): Promise<void> {
+    if (!Number.isInteger(progressQuietTaskMs) || progressQuietTaskMs < 0 || progressQuietTaskMs > 600_000) return
+    await this.writeSetting('progressQuietTaskMs', progressQuietTaskMs, 'DSH 没有接受该静默阈值。')
+  }
+
+  /** One write path for the scalar settings that only need a value round-trip. */
+  private async writeSetting<K extends keyof VoiceModelSettingsValue>(
+    field: K,
+    value: VoiceModelSettingsValue[K],
+    mismatchMessage: string,
+  ): Promise<void> {
+    if (!this.snapshot.available || !this.snapshot.writable || this.snapshot.saving) return
+    if (this.scope.getSnapshot().value?.[field] === value) return
+    this.publish({ ...this.snapshot, saving: true, error: undefined })
+    try {
+      await this.scope.set(field, value)
+      const accepted = this.scope.getSnapshot().value?.[field]
+      if (accepted !== value) throw new Error(mismatchMessage)
+      this.publish({ ...this.snapshot, saving: false, error: undefined })
+    } catch (error) {
+      this.publish({
+        ...this.snapshot,
+        saving: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
   /** Write through DSH's write-only credential seam; the literal is never stored in this controller. */
   async saveApiKey(value: string): Promise<boolean> {
     const key = value.trim()
@@ -153,16 +257,36 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     const scope = this.scope.getSnapshot()
     const model = scope.value?.model
     const turnDetection = scope.value?.turnDetection
+    const voice = scope.value?.voice ?? DEFAULT_REALTIME_VOICE_VOICE
+    const vadThreshold = scope.value?.vadThreshold ?? DEFAULT_VAD_THRESHOLD
+    const silenceDurationMs = scope.value?.silenceDurationMs ?? DEFAULT_SILENCE_DURATION_MS
+    const maxHistoryTurns = scope.value?.maxHistoryTurns ?? DEFAULT_MAX_HISTORY_TURNS
+    const enableSpeechEmotion = scope.value?.enableSpeechEmotion ?? true
+    const stylePrompt = scope.value?.stylePrompt ?? ''
+    const progressReporting = scope.value?.progressReporting ?? DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING
+    const progressMinIntervalMs = scope.value?.progressMinIntervalMs ?? DEFAULT_PROGRESS_MIN_INTERVAL_MS
+    const progressQuietTaskMs = scope.value?.progressQuietTaskMs ?? DEFAULT_PROGRESS_QUIET_TASK_MS
     const previousRef = this.snapshot.apiKeyRef
     const apiKeyRef = this.apiKeyRef()
     this.publish({
       ...this.snapshot,
       available: scope.status === 'ready'
         && isRealtimeVoiceModel(model)
-        && isRealtimeVoiceTurnDetection(turnDetection),
+        && isRealtimeVoiceTurnDetection(turnDetection)
+        && isRealtimeVoiceVoice(voice)
+        && isRealtimeVoiceProgressReporting(progressReporting),
       writable: scope.writable,
       ...(isRealtimeVoiceModel(model) ? { model } : {}),
       ...(isRealtimeVoiceTurnDetection(turnDetection) ? { turnDetection } : {}),
+      ...(isRealtimeVoiceVoice(voice) ? { voice } : {}),
+      vadThreshold,
+      silenceDurationMs,
+      maxHistoryTurns,
+      enableSpeechEmotion,
+      stylePrompt,
+      progressReporting,
+      progressMinIntervalMs,
+      progressQuietTaskMs,
       apiKeyRef,
       ...(apiKeyRef === previousRef ? {} : { apiKeyConfigured: false }),
     })
@@ -209,5 +333,86 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
   if (!isRealtimeVoiceTurnDetection(turnDetection)) return undefined
   const apiKeyEnv = (value as Record<string, unknown>).apiKeyEnv
   if (apiKeyEnv !== undefined && (typeof apiKeyEnv !== 'string' || apiKeyEnv.trim() === '')) return undefined
-  return { model, turnDetection, ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}) }
+  const rawProgressReporting = (value as Record<string, unknown>).progressReporting
+  const progressReporting = rawProgressReporting === undefined
+    ? DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING
+    : rawProgressReporting
+  if (!isRealtimeVoiceProgressReporting(progressReporting)) return undefined
+  const progressMinIntervalMs = optionalBoundedInteger(
+    (value as Record<string, unknown>).progressMinIntervalMs,
+    DEFAULT_PROGRESS_MIN_INTERVAL_MS,
+  )
+  const progressQuietTaskMs = optionalBoundedInteger(
+    (value as Record<string, unknown>).progressQuietTaskMs,
+    DEFAULT_PROGRESS_QUIET_TASK_MS,
+  )
+  if (progressMinIntervalMs === undefined || progressQuietTaskMs === undefined) return undefined
+  const rawVoice = (value as Record<string, unknown>).voice
+  const voice = rawVoice === undefined ? DEFAULT_REALTIME_VOICE_VOICE : rawVoice
+  if (!isRealtimeVoiceVoice(voice)) return undefined
+  const vadThreshold = optionalBoundedNumber(
+    (value as Record<string, unknown>).vadThreshold,
+    DEFAULT_VAD_THRESHOLD,
+    -1,
+    1,
+  )
+  const silenceDurationMs = optionalBoundedInteger(
+    (value as Record<string, unknown>).silenceDurationMs,
+    DEFAULT_SILENCE_DURATION_MS,
+    200,
+    6_000,
+  )
+  const maxHistoryTurns = optionalBoundedInteger(
+    (value as Record<string, unknown>).maxHistoryTurns,
+    DEFAULT_MAX_HISTORY_TURNS,
+    1,
+    50,
+  )
+  if (vadThreshold === undefined || silenceDurationMs === undefined || maxHistoryTurns === undefined) return undefined
+  const rawSpeechEmotion = (value as Record<string, unknown>).enableSpeechEmotion
+  if (rawSpeechEmotion !== undefined && typeof rawSpeechEmotion !== 'boolean') return undefined
+  const rawStylePrompt = (value as Record<string, unknown>).stylePrompt
+  if (rawStylePrompt !== undefined
+    && (typeof rawStylePrompt !== 'string' || rawStylePrompt.length > MAX_STYLE_PROMPT_LENGTH)) return undefined
+  return {
+    model,
+    turnDetection,
+    voice,
+    vadThreshold,
+    silenceDurationMs,
+    maxHistoryTurns,
+    enableSpeechEmotion: rawSpeechEmotion ?? true,
+    stylePrompt: rawStylePrompt ?? '',
+    progressReporting,
+    progressMinIntervalMs,
+    progressQuietTaskMs,
+    ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
+  }
+}
+
+function optionalBoundedInteger(
+  value: unknown,
+  fallback: number,
+  min = 0,
+  max = 600_000,
+): number | undefined {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) return undefined
+  return value
+}
+
+function optionalBoundedNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number | undefined {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) return undefined
+  return value
+}
+
+function roundTo(value: number, digits: number): number {
+  const factor = 10 ** digits
+  return Math.round(value * factor) / factor
 }

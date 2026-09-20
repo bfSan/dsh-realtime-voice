@@ -53,6 +53,7 @@ export declare class VoiceConnection {
     private helloTimer;
     private hostEventsAbort;
     private readonly pendingAssistantByTurn;
+    private readonly progressGate;
     constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime);
     get id(): string;
     dispose(reason?: string): void;

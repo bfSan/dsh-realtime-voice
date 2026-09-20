@@ -1,10 +1,19 @@
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { Context } from '@deepseek-ai/cordis';
-import { type RealtimeVoiceModel, type RealtimeVoiceTurnDetection } from '../models.ts';
+import { type RealtimeVoiceModel, type RealtimeVoiceProgressReporting, type RealtimeVoiceTurnDetection, type RealtimeVoiceVoice } from '../models.ts';
 export interface VoiceModelSettingsValue {
     model: RealtimeVoiceModel;
     turnDetection: RealtimeVoiceTurnDetection;
+    voice?: RealtimeVoiceVoice;
+    vadThreshold?: number;
+    silenceDurationMs?: number;
+    maxHistoryTurns?: number;
+    enableSpeechEmotion?: boolean;
+    stylePrompt?: string;
+    progressReporting?: RealtimeVoiceProgressReporting;
+    progressMinIntervalMs?: number;
+    progressQuietTaskMs?: number;
     apiKeyEnv?: string;
 }
 export interface VoiceModelSettingsSnapshot {
@@ -12,6 +21,15 @@ export interface VoiceModelSettingsSnapshot {
     writable: boolean;
     model: RealtimeVoiceModel;
     turnDetection: RealtimeVoiceTurnDetection;
+    voice: RealtimeVoiceVoice;
+    vadThreshold: number;
+    silenceDurationMs: number;
+    maxHistoryTurns: number;
+    enableSpeechEmotion: boolean;
+    stylePrompt: string;
+    progressReporting: RealtimeVoiceProgressReporting;
+    progressMinIntervalMs: number;
+    progressQuietTaskMs: number;
     saving: boolean;
     error: string | undefined;
     apiKeyRef: string;
@@ -33,6 +51,17 @@ export declare class VoiceModelSettingsController implements HostObservable<Voic
     subscribe: (listener: () => void) => (() => void);
     select(model: RealtimeVoiceModel): Promise<void>;
     selectTurnDetection(turnDetection: RealtimeVoiceTurnDetection): Promise<void>;
+    setProgressReporting(progressReporting: RealtimeVoiceProgressReporting): Promise<void>;
+    selectVoice(voice: RealtimeVoiceVoice): Promise<void>;
+    setVadThreshold(vadThreshold: number): Promise<void>;
+    setSilenceDuration(silenceDurationMs: number): Promise<void>;
+    setMaxHistoryTurns(maxHistoryTurns: number): Promise<void>;
+    setSpeechEmotion(enableSpeechEmotion: boolean): Promise<void>;
+    setStylePrompt(stylePrompt: string): Promise<void>;
+    setProgressMinInterval(progressMinIntervalMs: number): Promise<void>;
+    setProgressQuietTask(progressQuietTaskMs: number): Promise<void>;
+    /** One write path for the scalar settings that only need a value round-trip. */
+    private writeSetting;
     /** Write through DSH's write-only credential seam; the literal is never stored in this controller. */
     saveApiKey(value: string): Promise<boolean>;
     /** Refresh only when the Host reports that this card's credential changed. */

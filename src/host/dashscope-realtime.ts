@@ -91,6 +91,7 @@ export class DashScopeRealtime {
                 input_audio_format: 'pcm',
                 output_audio_format: 'pcm',
                 max_history_turns: this.config.maxHistoryTurns,
+                enable_speech_emotion: this.config.enableSpeechEmotion,
                 tools: this.tools,
                 turn_detection: this.config.turnDetection === 'server_vad'
                   ? {
@@ -98,7 +99,7 @@ export class DashScopeRealtime {
                       threshold: this.config.vadThreshold,
                       silence_duration_ms: this.config.silenceDurationMs,
                     }
-                  : { type: 'smart_turn' },
+                  : { type: this.config.turnDetection },
               },
             })
           }

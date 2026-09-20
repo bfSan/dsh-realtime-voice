@@ -496,6 +496,12 @@
   gap: 10px;
 }
 
+.modelSwitchThree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .modelChoice {
   position: relative;
   min-width: 0;
@@ -565,6 +571,153 @@
 
 .settingsError {
   color: var(--dsw-alias-label-error, #d13438);
+}
+
+.numberRow {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.numberField {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.numberFieldLabel {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-secondary));
+  font-size: 12px;
+}
+
+.numberFieldInput {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, var(--dsw-alias-border-subtle));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-surface-primary));
+}
+
+.numberInput {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+
+.numberSuffix {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-secondary));
+  font-size: 12px;
+}
+
+.numberFieldInput:has(.numberInput:disabled) {
+  opacity: .5;
+}
+
+.selectField {
+  display: grid;
+  gap: 6px;
+}
+
+.selectInput {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, var(--dsw-alias-border-subtle));
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-surface-primary));
+  font: inherit;
+  font-size: 13px;
+}
+
+.selectInput:disabled {
+  opacity: .5;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+}
+
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: var(--dsw-alias-border-l2, #d5d8de);
+  cursor: pointer;
+  transition: background .15s ease;
+}
+
+.toggle:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.toggleOn {
+  background: var(--dsw-alias-button-info-fill, #3964fe);
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .15s ease;
+}
+
+.toggleOn .toggleKnob {
+  transform: translateX(18px);
+}
+
+.toggleCaption {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-secondary));
+  font-size: 12px;
+}
+
+.styleField {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.styleInput {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, var(--dsw-alias-border-subtle));
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-surface-primary));
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.styleInput:focus {
+  border-color: var(--dsw-alias-brand-primary, #3964fe);
+}
+
+.styleInput:disabled {
+  opacity: .5;
 }
 
 .credentialSection {
@@ -664,7 +817,13 @@
 }
 
 @media (max-width: 520px) {
-  .modelSwitch {
+  .modelSwitch,
+  .modelSwitchThree {
     grid-template-columns: 1fr;
+  }
+
+  .numberRow {
+    flex-direction: column;
+    gap: 10px;
   }
 }

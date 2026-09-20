@@ -13,7 +13,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import {
   REALTIME_VOICE_SETTINGS_NAMESPACE,
   type RealtimeVoiceModel,
+  type RealtimeVoiceProgressReporting,
   type RealtimeVoiceTurnDetection,
+  type RealtimeVoiceVoice,
 } from '../models.ts'
 import { VoiceCallController } from './controller.ts'
 import { decodeVoiceModelSettings, VoiceModelSettingsController } from './model-settings.ts'
@@ -93,6 +95,15 @@ export function apply(ctx: Context): void {
       hooks: { voiceModelSettings: modelSettings },
       selectModel: (model: RealtimeVoiceModel) => { void modelSettings.select(model) },
       selectTurnDetection: (mode: RealtimeVoiceTurnDetection) => { void modelSettings.selectTurnDetection(mode) },
+      selectVoice: (voice: RealtimeVoiceVoice) => { void modelSettings.selectVoice(voice) },
+      setVadThreshold: (value: number) => { void modelSettings.setVadThreshold(value) },
+      setSilenceDuration: (value: number) => { void modelSettings.setSilenceDuration(value) },
+      setMaxHistoryTurns: (value: number) => { void modelSettings.setMaxHistoryTurns(value) },
+      setSpeechEmotion: (value: boolean) => { void modelSettings.setSpeechEmotion(value) },
+      setStylePrompt: (value: string) => { void modelSettings.setStylePrompt(value) },
+      selectProgressReporting: (mode: RealtimeVoiceProgressReporting) => { void modelSettings.setProgressReporting(mode) },
+      setProgressMinInterval: (value: number) => { void modelSettings.setProgressMinInterval(value) },
+      setProgressQuietTask: (value: number) => { void modelSettings.setProgressQuietTask(value) },
       saveApiKey: (value: string) => modelSettings.saveApiKey(value),
     }),
   }, VoiceSettingsCard))

@@ -33,7 +33,7 @@ export interface VoiceSnapshot {
   pendingApproval?: VoiceApproval
   pendingQuestion?: VoiceQuestion
   providerModel?: string
-  turnDetection?: 'server_vad' | 'smart_turn'
+  turnDetection?: 'server_vad' | 'smart_turn' | 'smart_turn_v2'
   elapsedSeconds: number
   occupancy?: VoiceOccupancyStatus
   error?: string | undefined
