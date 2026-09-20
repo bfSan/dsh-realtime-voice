@@ -21,6 +21,8 @@ export interface HandoffRecord {
   turn?: number
   queueItemId?: string
   createdAt: number
+  /** Set when this call matched an intent that is already in flight. */
+  deduplicated?: boolean
 }
 
 export interface PendingVoiceApproval {
@@ -101,8 +103,18 @@ export class DshVoiceCoordinator {
   async handoff(request: string, spokenInput: string): Promise<HandoffRecord> {
     const normalizedRequest = request.trim()
     if (normalizedRequest === '') throw new Error('Realtime handoff request is empty')
+    const normalizedSpoken = spokenInput.trim()
     const state = await this.sessionState(this.sessionId)
     const mode = state.running ? 'steer' : 'queue'
+    // Applies to both modes: a replay must not enqueue a second copy while the
+    // first is still sitting in the inbox, and must not steer the active turn.
+    const replayed = this.findReplayedHandoff(normalizedSpoken)
+    if (replayed !== undefined) {
+      this.ctx.logger?.info?.(
+        `[realtime-voice] converged a repeated handoff onto ${replayed.handoffId}: ${normalizedSpoken.slice(0, 120)}`,
+      )
+      return { ...replayed, deduplicated: true }
+    }
     const handoffId = `handoff_${randomUUID()}`
     const promptRpcId = this.rpcId()
     const record: HandoffRecord = {
@@ -111,7 +123,7 @@ export class DshVoiceCoordinator {
       sessionId: this.sessionId,
       mode,
       request: normalizedRequest,
-      spokenInput: spokenInput.trim(),
+      spokenInput: normalizedSpoken,
       status: state.running ? 'running' : 'accepted',
       createdAt: Date.now(),
     }
@@ -307,6 +319,24 @@ export class DshVoiceCoordinator {
     return [...this.handoffs.values()].filter(isActive)
   }
 
+  /**
+   * A realtime model re-reads every `[BACKEND]` progress announcement as a
+   * fresh turn and re-submits the same spoken sentence with reworded
+   * arguments. Call-id idempotency cannot see that: each replay carries a new
+   * call id and a new fingerprint. Comparing the user's own utterance against
+   * the live handoffs is what actually converges the storm, while a genuinely
+   * new constraint ("等一下，补充一下…") keeps its own handoff.
+   */
+  private findReplayedHandoff(spokenInput: string): HandoffRecord | undefined {
+    const intent = normalizeIntent(spokenInput)
+    if (intent === '') return undefined
+    for (const record of this.handoffs.values()) {
+      if (!isActive(record)) continue
+      if (normalizeIntent(record.spokenInput) === intent) return record
+    }
+    return undefined
+  }
+
   private async sessionState(sessionId: string): Promise<SessionState> {
     const response = await this.ctx.apiProxy.sessions.list({ rpcId: this.rpcId(), payload: {} })
     if (!response.result.ok) throw new Error(response.result.error.message)
@@ -341,6 +371,24 @@ This is an execution handoff from the live voice surface. Preserve the user's co
 
 function escapeXml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+/** Filler syllables an ASR pass inserts unpredictably between two takes of one sentence. */
+const ASR_FILLERS = /[呃嗯啊哦呀唉哟嘛呗]/g
+
+/**
+ * Reduce a spoken utterance to the intent a user actually voiced. The realtime
+ * model rephrases its *arguments* on every re-submit but echoes the user's
+ * transcript verbatim, so the transcript - not the arguments - is the stable
+ * identity of one spoken intent.
+ */
+function normalizeIntent(spokenInput: string): string {
+  return spokenInput
+    .trim()
+    .toLowerCase()
+    .replace(ASR_FILLERS, '')
+    .replace(/[\s\p{P}\p{S}]/gu, '')
+    .slice(0, 512)
 }
 
 function projectionTitle(value: unknown): string | undefined {

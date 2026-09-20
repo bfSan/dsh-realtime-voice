@@ -10,6 +10,8 @@ export interface HandoffRecord {
     turn?: number;
     queueItemId?: string;
     createdAt: number;
+    /** Set when this call matched an intent that is already in flight. */
+    deduplicated?: boolean;
 }
 export interface PendingVoiceApproval {
     rpcId: string;
@@ -97,6 +99,15 @@ export declare class DshVoiceCoordinator {
     }>;
     get active(): boolean;
     private activeHandoffs;
+    /**
+     * A realtime model re-reads every `[BACKEND]` progress announcement as a
+     * fresh turn and re-submits the same spoken sentence with reworded
+     * arguments. Call-id idempotency cannot see that: each replay carries a new
+     * call id and a new fingerprint. Comparing the user's own utterance against
+     * the live handoffs is what actually converges the storm, while a genuinely
+     * new constraint ("等一下，补充一下…") keeps its own handoff.
+     */
+    private findReplayedHandoff;
     private sessionState;
     private rpcId;
 }

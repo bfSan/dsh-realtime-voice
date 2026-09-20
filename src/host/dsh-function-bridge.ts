@@ -165,6 +165,15 @@ export class DshFunctionBridge {
           handoff_id: handoff.handoffId,
           target_session_id: handoff.sessionId,
           mode: handoff.mode,
+          // A re-submitted intent converges on the live handoff instead of
+          // steering the Agent with the same instruction again. Saying so
+          // explicitly is what stops the model from rephrasing and retrying.
+          ...(handoff.deduplicated === true
+            ? {
+                duplicate: true,
+                note: 'This is the same spoken request that is already being handled. Do not call handoff_to_dsh_agent again; wait for the completion event.',
+              }
+            : {}),
         }
       }
       case 'cancel_dsh_agent': {

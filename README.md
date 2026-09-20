@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.11`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
+当前版本：`0.1.0-alpha.12`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
 
 本包同时声明 DSH bundle、Host 插件和“原生 WebUI 浏览器侧”插件。这里不是另做一个网站：UI 直接注入 DSH 自带的 `http://127.0.0.1:3080`，不新增页面或 UI 端口。它不修改 DSH 源码，不另起后台进程；卸载或禁用时会移除 UI/路由并关闭麦克风、音频、浏览器 WebSocket 和百炼连接，已经交给 DSH 的任务继续运行。
 
@@ -15,6 +15,7 @@ DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI �
 - 自动识别 `DASHSCOPE_API_KEY`，也可在插件设置中通过 DSH 官方 credentials 安全写入或替换；浏览器不可回读明文
 - 默认低延迟 `server_vad`（阈值 0.35、静音 500ms），可选 `smart_turn`；实时转写、流式 PCM 播放、用户全双工打断
 - 实时优先的语义交接：Qwen Audio Realtime 立即处理自然对话；只有文件、应用、设备、项目、联网、打印等真实工作才通过官方 Function Calling 交给 DSH，不靠关键词或正则脚本触发
+- 同一意图收敛：Agent 执行期间，Qwen 若把 `[BACKEND][STATUS]` 进度误读成新要求而重提同一个用户意图，Host 按用户原话把重复调用并回进行中的任务，不再叠加 steer，避免一句话被放大成多个 DSH 轮次
 - DSH 是唯一执行面：任务直接进入拨号时绑定的原会话；空闲时 `queue`，工作中补充或纠正自动 `steer`，不创建影子语音 Agent 或后台 worker
 - 进度与终态闭环：DSH 的阶段消息、`turn/end` 结果、错误和取消状态回灌实时会话；只有权威终态才会被播报为“已完成”
 - 审批与追问闭环：订阅 DSH 原生 `approval/requested`、`question/requested`，用户可直接口头回答，也可在悬浮窗审批卡/选项卡确认，结果通过原始 RPC 回到同一任务
@@ -59,7 +60,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.11
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.12
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
