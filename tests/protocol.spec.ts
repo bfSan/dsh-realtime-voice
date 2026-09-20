@@ -91,6 +91,11 @@ describe('voice wire protocol', () => {
     expect(isVoiceClientControl({ type: 'voice.end', reason: { nope: true } })).toBe(false)
     expect(isVoiceClientControl({ type: 'voice.playback-drained', streamId: 7 })).toBe(true)
     expect(isVoiceClientControl({ type: 'voice.playback-drained', streamId: -1 })).toBe(false)
+    expect(isVoiceClientControl({ type: 'voice.inbox-deliver', entryIds: ['inbox-1'] })).toBe(true)
+    expect(isVoiceClientControl({ type: 'voice.inbox-read', entryIds: ['inbox-1', 'inbox-2'] })).toBe(true)
+    expect(isVoiceClientControl({ type: 'voice.inbox-deliver', entryIds: [] })).toBe(false)
+    expect(isVoiceClientControl({ type: 'voice.inbox-deliver', entryIds: [7] })).toBe(false)
+    expect(isVoiceClientControl({ type: 'voice.inbox-deliver' })).toBe(false)
   })
 
   it('accepts approval and structured-question answers but rejects malformed payloads', () => {

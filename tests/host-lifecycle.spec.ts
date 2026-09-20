@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/index.ts'
 import type { VoiceConfig } from '../src/host/config.ts'
 import { VOICE_ROUTE } from '../src/protocol.ts'
+import { VOICE_INBOX_ROUTE } from '../src/protocol.ts'
 import { VOICE_DIRECT_ROUTE, VOICE_DIRECT_STATUS_ROUTE } from '../src/direct-protocol.ts'
 
 const config: VoiceConfig = {
@@ -41,13 +42,14 @@ describe('Host plugin lifecycle', () => {
     expect(registerUpgrade).toHaveBeenCalledTimes(2)
     expect(registerUpgrade.mock.calls[0]?.[0]).toMatchObject({ path: VOICE_ROUTE })
     expect(registerUpgrade.mock.calls[1]?.[0]).toMatchObject({ path: VOICE_DIRECT_ROUTE })
-    expect(register).toHaveBeenCalledTimes(2)
+    expect(register).toHaveBeenCalledTimes(3)
     expect(register.mock.calls[0]?.[0]).toMatchObject({ kind: 'exact', path: `${VOICE_ROUTE}/status` })
     expect(register.mock.calls[1]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE })
+    expect(register.mock.calls[2]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_INBOX_ROUTE })
     expect(lifecycle).toBeTypeOf('function')
 
     await lifecycle?.()
     expect(unregister).toHaveBeenCalledTimes(2)
-    expect(unregisterStatus).toHaveBeenCalledTimes(2)
+    expect(unregisterStatus).toHaveBeenCalledTimes(3)
   })
 })

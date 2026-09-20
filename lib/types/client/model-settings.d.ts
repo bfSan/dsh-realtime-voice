@@ -14,6 +14,8 @@ export interface VoiceModelSettingsValue {
     progressReporting?: RealtimeVoiceProgressReporting;
     progressMinIntervalMs?: number;
     progressQuietTaskMs?: number;
+    handoffSkill?: string;
+    handoffInstructions?: string;
     apiKeyEnv?: string;
 }
 export interface VoiceModelSettingsSnapshot {
@@ -30,6 +32,8 @@ export interface VoiceModelSettingsSnapshot {
     progressReporting: RealtimeVoiceProgressReporting;
     progressMinIntervalMs: number;
     progressQuietTaskMs: number;
+    handoffSkill: string;
+    handoffInstructions: string;
     saving: boolean;
     error: string | undefined;
     apiKeyRef: string;
@@ -60,6 +64,14 @@ export declare class VoiceModelSettingsController implements HostObservable<Voic
     setStylePrompt(stylePrompt: string): Promise<void>;
     setProgressMinInterval(progressMinIntervalMs: number): Promise<void>;
     setProgressQuietTask(progressQuietTaskMs: number): Promise<void>;
+    /**
+     * Name of a DSH skill that rides along with every execution handoff. Blank
+     * clears it. Non empty values are validated on the Host against the live
+     * skill registry, so a typo is reported in the transcript rather than
+     * silently ignored.
+     */
+    setHandoffSkill(handoffSkill: string): Promise<void>;
+    setHandoffInstructions(handoffInstructions: string): Promise<void>;
     /** One write path for the scalar settings that only need a value round-trip. */
     private writeSetting;
     /** Write through DSH's write-only credential seam; the literal is never stored in this controller. */

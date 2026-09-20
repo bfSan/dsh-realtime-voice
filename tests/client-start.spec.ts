@@ -61,9 +61,16 @@ describe('browser voice start arbitration', () => {
   })
 
   it('disables a fresh dial for remote occupancy and re-enables it after grace expires', async () => {
-    const fetch = vi.fn()
-      .mockResolvedValueOnce(occupancyResponse(true, 'wechat-mini-program'))
-      .mockResolvedValueOnce(occupancyResponse(false))
+    const presence = [
+      occupancyResponse(true, 'wechat-mini-program'),
+      occupancyResponse(false),
+    ].values()
+    // The call-back list shares the presence cadence, so only status requests
+    // consume the queued occupancy responses.
+    const fetch = vi.fn(async (input: unknown) => {
+      if (String(input).endsWith('/status')) return presence.next().value
+      return { ok: false, json: async () => ({}) }
+    })
     vi.stubGlobal('fetch', fetch)
     const controller = new VoiceCallController()
     const refreshPresence = (controller as unknown as { refreshPresence(): Promise<unknown> }).refreshPresence.bind(controller)

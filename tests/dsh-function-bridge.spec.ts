@@ -63,4 +63,55 @@ describe('client-neutral DSH Function Call bridge', () => {
     await expect(Promise.all([voice, card])).resolves.toEqual([{ accepted: true }, { accepted: true }])
     expect(target.forgetApproval).toHaveBeenCalledTimes(1)
   })
+
+  it('passes resolved reporting guidance to the coordinator handoff', async () => {
+    const target = coordinator()
+    const bridge = new DshFunctionBridge(target as never, undefined, {}, undefined, {
+      resolveGuidance: async () => ({ body: '先汇报结论，再汇报改动文件。' }),
+    })
+    await expect(bridge.execute('call-guidance', 'handoff_to_dsh_agent', JSON.stringify({
+      instruction: '整理项目状态',
+    }), '帮我整理一下项目状态'))
+      .resolves.toMatchObject({ ok: true })
+    expect(target.handoff).toHaveBeenCalledWith(
+      '整理项目状态',
+      '帮我整理一下项目状态',
+      { guidance: '先汇报结论，再汇报改动文件。' },
+    )
+  })
+
+  it('keeps the handoff working when guidance resolution fails', async () => {
+    const target = coordinator()
+    const bridge = new DshFunctionBridge(target as never, undefined, {}, undefined, {
+      resolveGuidance: async () => { throw new Error('skills service exploded') },
+    })
+    await expect(bridge.execute('call-guidance-fail', 'handoff_to_dsh_agent', JSON.stringify({
+      instruction: '整理项目状态',
+    }), '帮我整理一下项目状态'))
+      .resolves.toMatchObject({ ok: true })
+    expect(target.handoff).toHaveBeenCalledWith('整理项目状态', '帮我整理一下项目状态', {})
+  })
+
+  it('notifies a root-lifetime listener once per accepted handoff', async () => {
+    const target = coordinator()
+    const onHandoff = vi.fn()
+    const bridge = new DshFunctionBridge(target as never, undefined, {}, undefined, { onHandoff })
+    await bridge.execute('call-watch', 'handoff_to_dsh_agent', JSON.stringify({ instruction: '扫描目录' }), '扫描一下目录')
+    expect(onHandoff).toHaveBeenCalledTimes(1)
+    expect(onHandoff).toHaveBeenCalledWith(expect.objectContaining({ handoffId: 'handoff-1' }))
+  })
+
+  it('does not re-notify for a deduplicated replay of a live handoff', async () => {
+    const target = coordinator()
+    target.handoff = vi.fn(async () => ({
+      handoffId: 'handoff-1',
+      sessionId: 'session-1',
+      mode: 'queue',
+      deduplicated: true,
+    }))
+    const onHandoff = vi.fn()
+    const bridge = new DshFunctionBridge(target as never, undefined, {}, undefined, { onHandoff })
+    await bridge.execute('call-replay', 'handoff_to_dsh_agent', JSON.stringify({ instruction: '扫描目录' }), '扫描一下目录')
+    expect(onHandoff).not.toHaveBeenCalled()
+  })
 })

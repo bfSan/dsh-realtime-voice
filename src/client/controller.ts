@@ -8,9 +8,12 @@ import {
   OUTPUT_SAMPLE_RATE,
   VOICE_PROTOCOL,
   VOICE_ROUTE,
+  VOICE_INBOX_ROUTE,
   VOICE_STATUS_ROUTE,
   VOICE_WEB_CLIENT_VERSION,
   type VoiceApproval,
+  type VoiceInboxEntry,
+  type VoiceInboxSnapshot,
   type VoicePhase,
   type VoiceQuestion,
   type VoiceQuestionAnswer,
@@ -36,6 +39,10 @@ export interface VoiceSnapshot {
   turnDetection?: 'server_vad' | 'smart_turn' | 'smart_turn_v2'
   elapsedSeconds: number
   occupancy?: VoiceOccupancyStatus
+  /** Finished handoffs waiting to be reported back by voice. */
+  inbox: readonly VoiceInboxEntry[]
+  /** IDs the user checked in the call-back list, in selection order. */
+  inboxSelection: readonly string[]
   error?: string | undefined
 }
 
@@ -46,6 +53,8 @@ const INITIAL_SNAPSHOT: VoiceSnapshot = {
   assistantTranscript: '',
   agentRunning: false,
   elapsedSeconds: 0,
+  inbox: [],
+  inboxSelection: [],
 }
 
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
@@ -84,6 +93,65 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
     this.presenceTimer = setInterval(() => {
       if (document.visibilityState !== 'hidden') void this.refreshPresence()
     }, 2_000)
+  }
+
+  toggleInboxSelection(entryId: string): void {
+    const selected = this.snapshot.inboxSelection
+    // Selection order is playback order, so a newly checked task goes last.
+    const next = selected.includes(entryId)
+      ? selected.filter(id => id !== entryId)
+      : [...selected, entryId]
+    this.update({ ...this.snapshot, inboxSelection: next })
+  }
+
+  selectAllInbox(): void {
+    this.update({
+      ...this.snapshot,
+      inboxSelection: this.snapshot.inbox.filter(entry => !entry.delivered).map(entry => entry.id),
+    })
+  }
+
+  clearInboxSelection(): void {
+    this.update({ ...this.snapshot, inboxSelection: [] })
+  }
+
+  /**
+   * Ring back: take the call up against the selected task's own session and
+   * ask the Host to speak those results in selection order.
+   */
+  async answerInbox(sessionId?: string): Promise<void> {
+    const selected = this.snapshot.inboxSelection.length > 0
+      ? this.snapshot.inboxSelection
+      : this.snapshot.inbox.filter(entry => !entry.delivered).slice(0, 1).map(entry => entry.id)
+    if (selected.length === 0) return
+    const target = sessionId
+      ?? this.snapshot.inbox.find(entry => entry.id === selected[0])?.sessionId
+    if (target === undefined) return
+    await this.start(target)
+    if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
+      this.sendControl({ type: 'voice.inbox-deliver', entryIds: [...selected] })
+      this.update({ ...this.snapshot, inboxSelection: [] })
+    }
+  }
+
+  /** Keep the task in the list but stop offering it as a call to take. */
+  dismissInbox(entryIds: readonly string[]): void {
+    if (entryIds.length === 0) return
+    void this.deleteInbox(entryIds)
+    this.update({
+      ...this.snapshot,
+      inbox: this.snapshot.inbox.filter(entry => !entryIds.includes(entry.id)),
+      inboxSelection: this.snapshot.inboxSelection.filter(id => !entryIds.includes(id)),
+    })
+  }
+
+  private async deleteInbox(entryIds: readonly string[]): Promise<void> {
+    try {
+      const query = entryIds.map(id => `id=${encodeURIComponent(id)}`).join('&')
+      await fetch(`${VOICE_INBOX_ROUTE}?${query}`, { method: 'DELETE' })
+    } catch {
+      // The next poll restores anything the Host still holds.
+    }
   }
 
   async start(sessionId: string): Promise<void> {
@@ -513,9 +581,31 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
       if (occupancy.protocol !== VOICE_PROTOCOL || typeof occupancy.active !== 'boolean') return undefined
       if (requestSeq !== this.presenceRequestSeq) return undefined
       this.update({ ...this.snapshot, occupancy })
+      void this.refreshInbox()
       return occupancy
     } catch {
       return undefined
+    }
+  }
+
+  /**
+   * Presence polling already runs every two seconds, so the call-back list
+   * rides that cadence instead of opening a second timer.
+   */
+  private async refreshInbox(): Promise<void> {
+    try {
+      const response = await fetch(VOICE_INBOX_ROUTE, { cache: 'no-store' })
+      if (!response.ok) return
+      const snapshot = await response.json() as VoiceInboxSnapshot
+      if (snapshot.protocol !== VOICE_PROTOCOL || !Array.isArray(snapshot.entries)) return
+      const live = new Set(snapshot.entries.map(entry => entry.id))
+      this.update({
+        ...this.snapshot,
+        inbox: snapshot.entries,
+        inboxSelection: this.snapshot.inboxSelection.filter(id => live.has(id)),
+      })
+    } catch {
+      return
     }
   }
 

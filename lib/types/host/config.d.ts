@@ -18,6 +18,16 @@ export interface VoiceConfig {
     progressQuietTaskMs: number;
     /** User-authored speaking style; appended to the built-in guard rails. */
     stylePrompt: string;
+    /**
+     * Name of a DSH skill whose body is attached to every execution handoff,
+     * so the working Agent reports, plans and inspects in the shape the
+     * operator wants read aloud. Defaults to the plugin's built-in skill; a
+     * project skill with the same name outranks it, and clearing the field
+     * removes all skill guidance.
+     */
+    handoffSkill: string;
+    /** Ad-hoc rules appended after the configured skill body. */
+    handoffInstructions: string;
     maxConnections: number;
     maxBinaryFrameBytes: number;
     connectTimeoutMs: number;

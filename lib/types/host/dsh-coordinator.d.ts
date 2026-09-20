@@ -10,8 +10,18 @@ export interface HandoffRecord {
     turn?: number;
     queueItemId?: string;
     createdAt: number;
+    /** Reporting/planning guidance captured for this handoff. */
+    guidance?: string;
     /** Set when this call matched an intent that is already in flight. */
     deduplicated?: boolean;
+}
+export interface HandoffOptions {
+    /**
+     * Operator-authored reporting guidance. It rides inside the delegation
+     * envelope so it shapes how the Agent reports this one request, instead of
+     * becoming a standing instruction for the whole session.
+     */
+    guidance?: string;
 }
 export interface PendingVoiceApproval {
     rpcId: string;
@@ -65,7 +75,7 @@ export declare class DshVoiceCoordinator {
     private readonly state;
     constructor(ctx: Context, sessionId: string, state?: DshVoiceCoordinatorState);
     /** Start work when idle, or steer the active turn when DSH is already busy. */
-    handoff(request: string, spokenInput: string): Promise<HandoffRecord>;
+    handoff(request: string, spokenInput: string, options?: HandoffOptions): Promise<HandoffRecord>;
     /** Cancel the authoritative bound DSH turn; there is no shadow worker. */
     cancel(reason?: string): Promise<{
         sessionId: string;

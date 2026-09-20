@@ -73,6 +73,11 @@ export function apply(ctx: Context): void {
       end: () => voice.end(),
       toggleMute: () => voice.toggleMute(),
       cancelResponse: () => voice.cancelResponse(),
+      answerInbox: (sessionId?: string) => { void voice.answerInbox(sessionId) },
+      toggleInboxSelection: (entryId: string) => voice.toggleInboxSelection(entryId),
+      selectAllInbox: () => voice.selectAllInbox(),
+      clearInboxSelection: () => voice.clearInboxSelection(),
+      dismissInbox: (entryIds: string[]) => voice.dismissInbox(entryIds),
       answerApproval: (approvalId, outcome) => voice.answerApproval(approvalId, outcome),
       answerQuestion: (requestId, answers) => voice.answerQuestion(requestId, answers),
       openSession: (sessionId) => {
@@ -104,6 +109,8 @@ export function apply(ctx: Context): void {
       selectProgressReporting: (mode: RealtimeVoiceProgressReporting) => { void modelSettings.setProgressReporting(mode) },
       setProgressMinInterval: (value: number) => { void modelSettings.setProgressMinInterval(value) },
       setProgressQuietTask: (value: number) => { void modelSettings.setProgressQuietTask(value) },
+      setHandoffSkill: (value: string) => { void modelSettings.setHandoffSkill(value) },
+      setHandoffInstructions: (value: string) => { void modelSettings.setHandoffInstructions(value) },
       saveApiKey: (value: string) => modelSettings.saveApiKey(value),
     }),
   }, VoiceSettingsCard))

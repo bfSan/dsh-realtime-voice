@@ -14,6 +14,7 @@ import {
   type RealtimeVoiceTurnDetection,
   type RealtimeVoiceVoice,
 } from '../models.ts'
+import { DEFAULT_HANDOFF_SKILL_NAME } from './handoff-skill.ts'
 
 /** Host-side realtime voice configuration; secrets are references, never values. */
 export interface VoiceConfig {
@@ -33,6 +34,16 @@ export interface VoiceConfig {
   progressQuietTaskMs: number
   /** User-authored speaking style; appended to the built-in guard rails. */
   stylePrompt: string
+  /**
+   * Name of a DSH skill whose body is attached to every execution handoff,
+   * so the working Agent reports, plans and inspects in the shape the
+   * operator wants read aloud. Defaults to the plugin's built-in skill; a
+   * project skill with the same name outranks it, and clearing the field
+   * removes all skill guidance.
+   */
+  handoffSkill: string
+  /** Ad-hoc rules appended after the configured skill body. */
+  handoffInstructions: string
   maxConnections: number
   maxBinaryFrameBytes: number
   connectTimeoutMs: number
@@ -58,6 +69,8 @@ export const Config: z<VoiceConfig> = z.object({
   progressMinIntervalMs: z.natural().min(0).max(600_000).default(45_000),
   progressQuietTaskMs: z.natural().min(0).max(600_000).default(20_000),
   stylePrompt: z.string().default(''),
+  handoffSkill: z.string().default(DEFAULT_HANDOFF_SKILL_NAME),
+  handoffInstructions: z.string().default(''),
   maxConnections: z.natural().min(1).max(32).default(4),
   maxBinaryFrameBytes: z.natural().min(1024).max(1024 * 1024).default(64 * 1024),
   connectTimeoutMs: z.natural().min(1000).max(60_000).default(15_000),

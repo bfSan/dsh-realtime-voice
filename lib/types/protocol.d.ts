@@ -5,7 +5,26 @@ export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_P
 export declare const VOICE_PROTOCOL_VERSION: 1;
 export declare const VOICE_ROUTE: "/plugins/realtime-voice/v1";
 export declare const VOICE_STATUS_ROUTE: "/plugins/realtime-voice/v1/status";
-export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.15";
+export declare const VOICE_INBOX_ROUTE: "/plugins/realtime-voice/v1/inbox";
+export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.16";
+/** One finished handoff waiting to be reported back to the user by voice. */
+export interface VoiceInboxEntry {
+    id: string;
+    handoffId: string;
+    sessionId: string;
+    sessionTitle?: string;
+    request: string;
+    summary: string;
+    status: 'completed' | 'failed' | 'cancelled';
+    createdAt: number;
+    /** Wall-clock duration of the delegated turn, used to skip trivial tasks. */
+    durationMs: number;
+    delivered: boolean;
+}
+export interface VoiceInboxSnapshot {
+    protocol: typeof VOICE_PROTOCOL;
+    entries: readonly VoiceInboxEntry[];
+}
 export declare const INPUT_SAMPLE_RATE: 16000;
 export declare const OUTPUT_SAMPLE_RATE: 24000;
 export declare const AUDIO_CHANNELS: 1;
@@ -89,6 +108,12 @@ export type VoiceClientControl = VoiceHello | {
     streamId: number;
 } | {
     type: 'voice.commit';
+} | {
+    type: 'voice.inbox-deliver';
+    entryIds: string[];
+} | {
+    type: 'voice.inbox-read';
+    entryIds: string[];
 } | {
     type: 'voice.approval-answer';
     approvalId: string;

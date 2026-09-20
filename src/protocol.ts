@@ -6,7 +6,28 @@ export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_P
 export const VOICE_PROTOCOL_VERSION = 1 as const
 export const VOICE_ROUTE = '/plugins/realtime-voice/v1' as const
 export const VOICE_STATUS_ROUTE = '/plugins/realtime-voice/v1/status' as const
-export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.15' as const
+export const VOICE_INBOX_ROUTE = '/plugins/realtime-voice/v1/inbox' as const
+export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.16' as const
+
+/** One finished handoff waiting to be reported back to the user by voice. */
+export interface VoiceInboxEntry {
+  id: string
+  handoffId: string
+  sessionId: string
+  sessionTitle?: string
+  request: string
+  summary: string
+  status: 'completed' | 'failed' | 'cancelled'
+  createdAt: number
+  /** Wall-clock duration of the delegated turn, used to skip trivial tasks. */
+  durationMs: number
+  delivered: boolean
+}
+
+export interface VoiceInboxSnapshot {
+  protocol: typeof VOICE_PROTOCOL
+  entries: readonly VoiceInboxEntry[]
+}
 
 export const INPUT_SAMPLE_RATE = 16_000 as const
 export const OUTPUT_SAMPLE_RATE = 24_000 as const
@@ -102,6 +123,8 @@ export type VoiceClientControl = VoiceHello
   | { type: 'voice.cancel-response' }
   | { type: 'voice.playback-drained'; streamId: number }
   | { type: 'voice.commit' }
+  | { type: 'voice.inbox-deliver'; entryIds: string[] }
+  | { type: 'voice.inbox-read'; entryIds: string[] }
   | { type: 'voice.approval-answer'; approvalId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'voice.question-answer'; requestId: string; answers: VoiceQuestionAnswer[] }
   | { type: 'voice.ping'; sentAt: number }
@@ -280,6 +303,12 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
   const message = value as Record<string, unknown>
   if (message.type === 'voice.end') return message.reason === undefined || (typeof message.reason === 'string' && message.reason.length <= 128)
   if (message.type === 'voice.cancel-response' || message.type === 'voice.commit') return true
+  if (message.type === 'voice.inbox-deliver' || message.type === 'voice.inbox-read') {
+    return Array.isArray(message.entryIds)
+      && message.entryIds.length > 0
+      && message.entryIds.length <= 20
+      && message.entryIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 128)
+  }
   if (message.type === 'voice.playback-drained') {
     return typeof message.streamId === 'number'
       && Number.isSafeInteger(message.streamId)

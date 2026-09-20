@@ -28,6 +28,8 @@ export interface VoiceSettingsCardInjected {
   selectProgressReporting: (mode: RealtimeVoiceProgressReporting) => void
   setProgressMinInterval: (value: number) => void
   setProgressQuietTask: (value: number) => void
+  setHandoffSkill: (value: string) => void
+  setHandoffInstructions: (value: string) => void
   saveApiKey: (value: string) => Promise<boolean>
 }
 
@@ -48,6 +50,8 @@ export function VoiceSettingsCard({
   selectProgressReporting,
   setProgressMinInterval,
   setProgressQuietTask,
+  setHandoffSkill,
+  setHandoffInstructions,
   saveApiKey,
 }: VoiceSettingsCardProps) {
   const state = useVoiceModelSettings(snapshot => snapshot)
@@ -238,6 +242,27 @@ export function VoiceSettingsCard({
             </div>
           )}
         </div>
+        <div className={styles.settingsSubsection}>
+          <div className={styles.settingsLabel}>执行 Agent 汇报指导</div>
+          <SkillNameField
+            value={state.handoffSkill}
+            disabled={disabled}
+            commit={value => setHandoffSkill(value)}
+          />
+          <p className={styles.settingsHint}>
+            填写 DSH 已安装的 Skill 名。每次把任务交给执行 Agent 时，这段 Skill 正文会随任务一起下发，
+            用来规定它怎么汇报进展、先看什么、怎么安排工作。留空表示不附加。
+          </p>
+          <HandoffInstructionsField
+            value={state.handoffInstructions}
+            disabled={disabled}
+            commit={value => setHandoffInstructions(value)}
+          />
+          <p className={styles.settingsHint}>
+            临时补充的汇报要求，追加在 Skill 正文之后，适合这次不想改 Skill 的微调。
+            它只影响汇报与规划，不覆盖你的指令、会话权限或工具结果。
+          </p>
+        </div>
         {state.error === undefined ? null : <p className={styles.settingsError} role="alert">{state.error}</p>}
         {state.writable ? null : <p className={styles.settingsHint}>当前连接不能修改主机设置，请在本机 3080 WebUI 中操作。</p>}
         <div className={styles.credentialSection}>
@@ -348,6 +373,70 @@ function StylePromptField(props: {
       <span className={styles.settingsHint}>
         只影响语气、称呼和长短，不会改变工具调用、审批与终态规则；从下一通电话开始生效。
       </span>
+    </label>
+  )
+}
+
+function SkillNameField(props: {
+  value: string
+  disabled: boolean
+  commit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+  const shown = draft ?? props.value
+  const commit = () => {
+    if (draft === undefined) return
+    setDraft(undefined)
+    if (draft.trim() !== props.value) props.commit(draft)
+  }
+  return (
+    <label className={styles.numberField}>
+      <span className={styles.numberFieldLabel}>汇报 Skill 名称（可留空）</span>
+      <span className={styles.numberFieldInput}>
+        <input
+          type="text"
+          className={styles.numberInput}
+          spellCheck={false}
+          autoComplete="off"
+          maxLength={128}
+          placeholder="例如：dsh-voice-supervisor"
+          value={shown}
+          disabled={props.disabled}
+          onChange={event => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={event => { if (event.key === 'Enter') commit() }}
+        />
+      </span>
+    </label>
+  )
+}
+
+function HandoffInstructionsField(props: {
+  value: string
+  disabled: boolean
+  commit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+  const shown = draft ?? props.value
+  const commit = () => {
+    if (draft === undefined) return
+    setDraft(undefined)
+    if (draft.trim() !== props.value) props.commit(draft)
+  }
+  return (
+    <label className={styles.styleField}>
+      <span className={styles.numberFieldLabel}>补充汇报指令（可留空）</span>
+      <textarea
+        className={styles.styleInput}
+        rows={4}
+        maxLength={8_000}
+        spellCheck={false}
+        placeholder="例如：先给我一句话结论；只汇报影响我决策的进展；改动的文件用中文列名字。"
+        value={shown}
+        disabled={props.disabled}
+        onChange={event => setDraft(event.target.value)}
+        onBlur={commit}
+      />
     </label>
   )
 }

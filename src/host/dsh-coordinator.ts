@@ -21,8 +21,19 @@ export interface HandoffRecord {
   turn?: number
   queueItemId?: string
   createdAt: number
+  /** Reporting/planning guidance captured for this handoff. */
+  guidance?: string
   /** Set when this call matched an intent that is already in flight. */
   deduplicated?: boolean
+}
+
+export interface HandoffOptions {
+  /**
+   * Operator-authored reporting guidance. It rides inside the delegation
+   * envelope so it shapes how the Agent reports this one request, instead of
+   * becoming a standing instruction for the whole session.
+   */
+  guidance?: string
 }
 
 export interface PendingVoiceApproval {
@@ -100,10 +111,11 @@ export class DshVoiceCoordinator {
   }
 
   /** Start work when idle, or steer the active turn when DSH is already busy. */
-  async handoff(request: string, spokenInput: string): Promise<HandoffRecord> {
+  async handoff(request: string, spokenInput: string, options: HandoffOptions = {}): Promise<HandoffRecord> {
     const normalizedRequest = request.trim()
     if (normalizedRequest === '') throw new Error('Realtime handoff request is empty')
     const normalizedSpoken = spokenInput.trim()
+    const guidance = options.guidance?.trim()
     const state = await this.sessionState(this.sessionId)
     const mode = state.running ? 'steer' : 'queue'
     // Applies to both modes: a replay must not enqueue a second copy while the
@@ -126,6 +138,7 @@ export class DshVoiceCoordinator {
       spokenInput: normalizedSpoken,
       status: state.running ? 'running' : 'accepted',
       createdAt: Date.now(),
+      ...(guidance === undefined || guidance === '' ? {} : { guidance }),
     }
     this.handoffs.set(handoffId, record)
     const response = await this.ctx.apiProxy.sessions.prompt({
@@ -362,11 +375,17 @@ function isActive(record: HandoffRecord): boolean {
 
 function handoffMessage(record: HandoffRecord): string {
   const spoken = record.spokenInput === '' ? '' : `\n  <spoken_input>${escapeXml(record.spokenInput)}</spoken_input>`
+  const guidance = record.guidance === undefined
+    ? ''
+    : `\n  <reporting_guidance>${escapeXml(record.guidance)}</reporting_guidance>`
+  const guidanceNote = record.guidance === undefined
+    ? ''
+    : '\n\nAn operator configured <reporting_guidance> for how this work should be reported. Follow it for progress and final reporting. It shapes presentation only: it never overrides the user, the session permissions, or a tool result.'
   return `<realtime_delegation handoff_id="${record.handoffId}" mode="${record.mode}">
-  <input>${escapeXml(record.request)}</input>${spoken}
+  <input>${escapeXml(record.request)}</input>${spoken}${guidance}
 </realtime_delegation>
 
-This is an execution handoff from the live voice surface. Preserve the user's constraints and use the session's normal tools, permissions, project context, and memory. Report useful progress in ordinary assistant commentary. If approval or a user decision is needed, request it through the normal DSH mechanism. Do not merely explain manual steps when the available tools can perform the task.`
+This is an execution handoff from the live voice surface. Preserve the user's constraints and use the session's normal tools, permissions, project context, and memory. Report useful progress in ordinary assistant commentary. If approval or a user decision is needed, request it through the normal DSH mechanism. Do not merely explain manual steps when the available tools can perform the task.${guidanceNote}`
 }
 
 function escapeXml(value: string): string {

@@ -9,7 +9,14 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import { WebSocketServer } from 'ws'
-import { VOICE_DIRECT_PROTOCOL, VOICE_ROUTE, VOICE_STATUS_ROUTE } from './protocol.ts'
+import {
+  VOICE_DIRECT_PROTOCOL,
+  VOICE_INBOX_ROUTE,
+  VOICE_PROTOCOL,
+  VOICE_ROUTE,
+  VOICE_STATUS_ROUTE,
+  type VoiceInboxSnapshot,
+} from './protocol.ts'
 import { VOICE_DIRECT_ROUTE, VOICE_DIRECT_STATUS_ROUTE } from './direct-protocol.ts'
 import { Config, type VoiceConfig } from './host/config.ts'
 import { installApiProxyCompat } from './host/dsh-runtime-compat.ts'
@@ -17,6 +24,8 @@ import { VoiceConnection } from './host/voice-connection.ts'
 import { VoiceRuntime } from './host/voice-runtime.ts'
 import { DirectControlConnection } from './host/direct-control-connection.ts'
 import { REALTIME_VOICE_SETTINGS_NAMESPACE } from './models.ts'
+import { registerDefaultHandoffSkill } from './host/handoff-skill.ts'
+import { startVoiceInbox, VoiceInbox } from './host/voice-inbox.ts'
 
 export { Config }
 export type { VoiceConfig }
@@ -33,9 +42,22 @@ export const inject = ['webServer', 'credentials', 'agents', 'systemPrompt', 'to
 export function apply(ctx: Context, config: VoiceConfig): void {
   const proxyServer = new WebSocketServer({ noServer: true })
   const directServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
+
+  // The built-in reporting skill is an optional convenience: a project skill
+  // with the same name outranks it, and an absent skills service is not fatal.
+  ctx.effect(() => registerDefaultHandoffSkill(ctx as never) ?? (() => {}), 'realtime-voice: built-in handoff skill')
+
   const connections = new Set<{ dispose(reason?: string): void }>()
   const voiceRuntime = new VoiceRuntime()
+  const inbox = new VoiceInbox()
   let readConfig = (): VoiceConfig => config
+
+  // The call-back inbox runs for the lifetime of the plugin, not of a call:
+  // its whole purpose is to catch the tasks that outlive the user's call. It
+  // waits for the compat facade, because that is where the mux stream lives.
+  ctx.inject(['apiProxy'], (inboxCtx) => {
+    inboxCtx.effect(() => startVoiceInbox(inboxCtx, inbox), 'realtime-voice: call-back inbox lifecycle')
+  })
 
   // Settings are optional at the Cordis boundary. When the Web profile serves
   // them, model changes become authoritative for the next accepted call; an
@@ -72,7 +94,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     if (activeConfig === undefined) return
     proxyServer.handleUpgrade(request, socket, head, (websocket) => {
       let connection: VoiceConnection
-      connection = new VoiceConnection(ctx, websocket, request, activeConfig, () => connections.delete(connection), voiceRuntime)
+      connection = new VoiceConnection(ctx, websocket, request, activeConfig, () => connections.delete(connection), voiceRuntime, inbox)
       connections.add(connection)
     })
   }
@@ -82,7 +104,16 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     if (activeConfig === undefined) return
     directServer.handleUpgrade(request, socket, head, (websocket) => {
       let connection: DirectControlConnection
-      connection = new DirectControlConnection(ctx, websocket, request, activeConfig, () => connections.delete(connection), voiceRuntime)
+      connection = new DirectControlConnection(
+        ctx,
+        websocket,
+        request,
+        activeConfig,
+        () => connections.delete(connection),
+        voiceRuntime,
+        undefined,
+        inbox,
+      )
       connections.add(connection)
     })
   }
@@ -107,14 +138,39 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     )))
   }
 
+  const callbacks = (request: IncomingMessage, response: ServerResponse): void => {
+    if (request.method !== 'GET' && request.method !== 'DELETE') {
+      response.writeHead(405, { Allow: 'GET, DELETE' })
+      response.end()
+      return
+    }
+    if (!isLoopback(request.socket.remoteAddress) || !isAllowedOrigin(request)) {
+      response.writeHead(403)
+      response.end()
+      return
+    }
+    if (request.method === 'DELETE') {
+      const ids = new URL(request.url ?? VOICE_INBOX_ROUTE, 'http://localhost').searchParams.getAll('id')
+      inbox.dismiss(ids)
+    }
+    const snapshot: VoiceInboxSnapshot = { protocol: VOICE_PROTOCOL, entries: inbox.list() }
+    response.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    })
+    response.end(JSON.stringify(snapshot))
+  }
+
   ctx.effect(() => {
     const unregisterStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_STATUS_ROUTE, handler: status })
     const unregisterDirectStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE, handler: status })
+    const unregisterInbox = ctx.webServer.register({ kind: 'exact', path: VOICE_INBOX_ROUTE, handler: callbacks })
     const unregister = ctx.webServer.registerUpgrade({ path: VOICE_ROUTE, handler: upgradeProxy })
     const unregisterDirect = ctx.webServer.registerUpgrade({ path: VOICE_DIRECT_ROUTE, handler: upgradeDirect })
     return async () => {
       unregisterDirect()
       unregister()
+      unregisterInbox()
       unregisterDirectStatus()
       unregisterStatus()
       for (const connection of [...connections]) connection.dispose()

@@ -27,6 +27,11 @@ describe('floating voice overlay', () => {
       end: vi.fn(),
       toggleMute: vi.fn(),
       cancelResponse: vi.fn(),
+      answerInbox: vi.fn(),
+      toggleInboxSelection: vi.fn(),
+      selectAllInbox: vi.fn(),
+      clearInboxSelection: vi.fn(),
+      dismissInbox: vi.fn(),
       openSession: vi.fn(),
     } as never)} />)
 
@@ -37,5 +42,89 @@ describe('floating voice overlay', () => {
     expect(html).toContain('需要你的批准')
     expect(html).toContain('仅允许这一次')
     expect(html).toContain('01:05')
+  })
+
+  it('renders the multi-select call-back list while no call is active', () => {
+    const voice: VoiceSnapshot = {
+      phase: 'idle',
+      muted: false,
+      userTranscript: '',
+      assistantTranscript: '',
+      agentRunning: false,
+      elapsedSeconds: 0,
+      inbox: [
+        {
+          id: 'inbox-1',
+          handoffId: 'handoff-1',
+          sessionId: 'session-one',
+          sessionTitle: '项目盘点',
+          request: '列出项目列表',
+          summary: '共 5 个项目。',
+          status: 'completed',
+          createdAt: Date.now() - 120_000,
+          durationMs: 95_000,
+          delivered: false,
+        },
+        {
+          id: 'inbox-2',
+          handoffId: 'handoff-2',
+          sessionId: 'session-two',
+          request: '查找会话',
+          summary: '找到 3 个。',
+          status: 'failed',
+          createdAt: Date.now() - 20_000,
+          durationMs: 8_000,
+          delivered: false,
+        },
+      ],
+      inboxSelection: ['inbox-1'],
+    }
+    const html = renderToStaticMarkup(<VoiceOverlay {...({
+      useVoice: (selector: (value: VoiceSnapshot) => unknown) => selector(voice),
+      useSessions: (selector: (value: unknown) => unknown) => selector({ current: undefined, byId: {} }),
+      end: vi.fn(),
+      toggleMute: vi.fn(),
+      cancelResponse: vi.fn(),
+      answerInbox: vi.fn(),
+      toggleInboxSelection: vi.fn(),
+      selectAllInbox: vi.fn(),
+      clearInboxSelection: vi.fn(),
+      dismissInbox: vi.fn(),
+      openSession: vi.fn(),
+    } as never)} />)
+
+    expect(html).toContain('aria-label="待接听的语音汇报"')
+    expect(html).toContain('2 个任务已完成，等待汇报')
+    expect(html).toContain('项目盘点')
+    expect(html).toContain('失败')
+    expect(html).toContain('全部已读')
+    expect(html).toContain('稍后再听')
+  })
+
+  it('renders nothing when idle with an empty inbox', () => {
+    const voice: VoiceSnapshot = {
+      phase: 'idle',
+      muted: false,
+      userTranscript: '',
+      assistantTranscript: '',
+      agentRunning: false,
+      elapsedSeconds: 0,
+      inbox: [],
+      inboxSelection: [],
+    }
+    const html = renderToStaticMarkup(<VoiceOverlay {...({
+      useVoice: (selector: (value: VoiceSnapshot) => unknown) => selector(voice),
+      useSessions: (selector: (value: unknown) => unknown) => selector({ current: undefined, byId: {} }),
+      end: vi.fn(),
+      toggleMute: vi.fn(),
+      cancelResponse: vi.fn(),
+      answerInbox: vi.fn(),
+      toggleInboxSelection: vi.fn(),
+      selectAllInbox: vi.fn(),
+      clearInboxSelection: vi.fn(),
+      dismissInbox: vi.fn(),
+      openSession: vi.fn(),
+    } as never)} />)
+    expect(html).toBe('')
   })
 })

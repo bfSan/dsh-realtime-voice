@@ -790,6 +790,169 @@
   cursor: default;
 }
 
+/* Incoming-report surface: same floating frame as a live call, but it exists
+   only to offer finished background work, so it reads as a list, not a call. */
+.overlayIncoming {
+  gap: 10px;
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #3964fe) 42%, transparent);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, .22);
+}
+
+.incomingHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: grab;
+}
+
+.ringDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-info-fill, #3964fe);
+  box-shadow: 0 0 0 0 rgba(57, 100, 254, .55);
+  animation: ringPulse 1.4s ease-out infinite;
+}
+
+@keyframes ringPulse {
+  0% { box-shadow: 0 0 0 0 rgba(57, 100, 254, .55); }
+  70% { box-shadow: 0 0 0 9px rgba(57, 100, 254, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(57, 100, 254, 0); }
+}
+
+.incomingList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.incomingRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-secondary, rgba(15, 23, 42, .1));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-secondary, rgba(15, 23, 42, .02));
+}
+
+.incomingLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.incomingTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-text-primary, #0f172a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incomingMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-text-tertiary, #64748b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incomingStatus {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(57, 100, 254, .12);
+  color: var(--dsw-alias-brand-primary, #3964fe);
+}
+
+.incomingStatus[data-status="failed"] {
+  background: rgba(220, 38, 38, .12);
+  color: #dc2626;
+}
+
+.incomingStatus[data-status="cancelled"] {
+  background: rgba(100, 116, 139, .16);
+  color: #64748b;
+}
+
+.incomingActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-text-tertiary, #94a3b8);
+}
+
+.incomingTime {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linkButton {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-brand-primary, #3964fe);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.incomingFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.answerButton {
+  flex: 1;
+  min-width: 96px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--dsw-alias-button-info-fill, #3964fe);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.answerButton:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.incomingHint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--dsw-alias-text-tertiary, #94a3b8);
+}
+
+.incomingNotice {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(57, 100, 254, .08);
+  font-size: 12px;
+  color: var(--dsw-alias-text-secondary, #475569);
+}
+
 @media (max-width: 1199px) {
   .overlay {
     top: auto;

@@ -25,6 +25,13 @@ export declare const REALTIME_VOICE_PROGRESS_REPORTING: {
     readonly all: "all";
 };
 export type RealtimeVoiceProgressReporting = typeof REALTIME_VOICE_PROGRESS_REPORTING[keyof typeof REALTIME_VOICE_PROGRESS_REPORTING];
+/**
+ * Name of the reporting/planning skill the plugin ships with. A project skill
+ * under the same name outranks it, so an operator can shadow the default
+ * without touching plugin internals. Shared by the Host default and the
+ * settings card so both surfaces agree on one value.
+ */
+export declare const DEFAULT_HANDOFF_SKILL_NAME = "dsh-voice-supervisor";
 export declare const DEFAULT_REALTIME_VOICE_MODEL: RealtimeVoiceModel;
 export declare const DEFAULT_REALTIME_VOICE_TURN_DETECTION: RealtimeVoiceTurnDetection;
 export declare const DEFAULT_REALTIME_VOICE_VOICE: RealtimeVoiceVoice;

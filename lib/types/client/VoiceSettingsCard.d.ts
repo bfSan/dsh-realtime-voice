@@ -16,8 +16,10 @@ export interface VoiceSettingsCardInjected {
     selectProgressReporting: (mode: RealtimeVoiceProgressReporting) => void;
     setProgressMinInterval: (value: number) => void;
     setProgressQuietTask: (value: number) => void;
+    setHandoffSkill: (value: string) => void;
+    setHandoffInstructions: (value: string) => void;
     saveApiKey: (value: string) => Promise<boolean>;
 }
 export type VoiceSettingsCardProps = PropsRuntime<'settings.plugin.item'> & InjectFace<VoiceSettingsCardInjected>;
 /** One native Plugins-settings card. Changes persist immediately and affect the next call. */
-export declare function VoiceSettingsCard({ useVoiceModelSettings, selectModel, selectTurnDetection, selectVoice, setVadThreshold, setSilenceDuration, setMaxHistoryTurns, setSpeechEmotion, setStylePrompt, selectProgressReporting, setProgressMinInterval, setProgressQuietTask, saveApiKey, }: VoiceSettingsCardProps): import("react").JSX.Element | null;
+export declare function VoiceSettingsCard({ useVoiceModelSettings, selectModel, selectTurnDetection, selectVoice, setVadThreshold, setSilenceDuration, setMaxHistoryTurns, setSpeechEmotion, setStylePrompt, selectProgressReporting, setProgressMinInterval, setProgressQuietTask, setHandoffSkill, setHandoffInstructions, saveApiKey, }: VoiceSettingsCardProps): import("react").JSX.Element | null;

@@ -3,7 +3,9 @@ import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { realtimeVoiceModelLabel, realtimeVoiceTurnDetectionLabel } from '../models.ts'
 import type { VoiceQuestionAnswer } from '../protocol.ts'
+import type { VoiceInboxEntry } from '../protocol.ts'
 import type { VoiceSnapshot } from './controller.ts'
+import { playRingtone, RINGTONE_DURATION_MS } from './ringtone.ts'
 import {
   clampFloatingPosition,
   defaultFloatingPosition,
@@ -19,6 +21,11 @@ export interface VoiceOverlayInjected {
   cancelResponse: () => void
   answerApproval: (approvalId: string, outcome: 'allowed-once' | 'rejected') => void
   answerQuestion: (requestId: string, answers: VoiceQuestionAnswer[]) => void
+  answerInbox: (sessionId?: string) => void
+  toggleInboxSelection: (entryId: string) => void
+  selectAllInbox: () => void
+  clearInboxSelection: () => void
+  dismissInbox: (entryIds: string[]) => void
   openSession: (sessionId: string) => void
 }
 export type VoiceOverlayProps = PropsRuntime<'shell.overlay'> & InjectFace<VoiceOverlayInjected>
@@ -38,6 +45,11 @@ export function VoiceOverlay({
   cancelResponse,
   answerApproval,
   answerQuestion,
+  answerInbox,
+  toggleInboxSelection,
+  selectAllInbox,
+  clearInboxSelection,
+  dismissInbox,
   openSession,
 }: VoiceOverlayProps) {
   const voice = useVoice(snapshot => snapshot)
@@ -53,6 +65,26 @@ export function VoiceOverlay({
     : state.byId[voice.sessionId as SessionId])
   const currentSessionId = useSessions(state => state.current)
   const viewingOtherSession = voice.sessionId !== undefined && currentSessionId !== voice.sessionId
+  // A snapshot from an older Host has no inbox field; treat it as empty.
+  const waiting = (voice.inbox ?? []).filter(entry => !entry.delivered)
+  const rungRef = useRef<Set<string>>(new Set())
+  const newWaitingIds = waiting.map(entry => entry.id).filter(id => !rungRef.current.has(id))
+
+  useEffect(() => {
+    if (voice.phase !== 'idle' || newWaitingIds.length === 0) return
+    for (const id of newWaitingIds) rungRef.current.add(id)
+    const stop = playRingtone()
+    if (stop === undefined) return
+    // The bell is deliberately short: after five seconds the call falls back
+    // to "稍后再接" and the task simply stays in the list.
+    const timer = setTimeout(stop, RINGTONE_DURATION_MS)
+    return () => {
+      clearTimeout(timer)
+      stop()
+    }
+    // Only the arrival of a new report may ring: dismissing one row, or
+    // finishing a call, must not restart the bell for rows already offered.
+  }, [newWaitingIds.join(','), voice.phase])
 
   useEffect(() => {
     if (voice.phase === 'requesting-permission') setCollapsed(false)
@@ -127,10 +159,37 @@ export function VoiceOverlay({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
-  if (voice.phase === 'idle') return null
+  // The call surface stays mounted while it is idle only to offer pending
+  // reports; otherwise a finished background task would have nowhere to ring.
+  if (voice.phase === 'idle' && waiting.length === 0) return null
   const floatingStyle: CSSProperties | undefined = position === undefined
     ? undefined
     : { left: position.x, top: position.y, right: 'auto', bottom: 'auto' }
+
+  if (voice.phase === 'idle') {
+    return (
+      <section
+        ref={panelRef}
+        className={`${styles.overlay} ${styles.overlayIncoming} ${dragging ? styles.dragging : ''}`}
+        style={floatingStyle}
+        aria-label="待接听的语音汇报"
+        onPointerDown={beginDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <CallBackList
+          waiting={waiting}
+          selection={voice.inboxSelection}
+          onToggle={toggleInboxSelection}
+          onSelectAll={selectAllInbox}
+          onClearSelection={clearInboxSelection}
+          onDismiss={dismissInbox}
+          onAnswer={() => answerInbox()}
+        />
+      </section>
+    )
+  }
 
   if (collapsed && voice.phase !== 'error') {
     return (
@@ -321,6 +380,11 @@ export function VoiceOverlay({
             </section>
           )}
           {voice.error === undefined ? null : <div className={styles.inlineError}>{voice.error}</div>}
+          {waiting.length === 0 ? null : (
+            <div className={styles.incomingNotice}>
+              还有 {waiting.length} 个后台任务已完成，结束后可接听汇报。
+            </div>
+          )}
           <footer className={styles.controls}>
             <button type="button" className={styles.secondaryButton} onClick={toggleMute}>
               {voice.muted ? '取消静音' : '静音'}
@@ -335,6 +399,108 @@ export function VoiceOverlay({
       )}
     </section>
   )
+}
+
+function CallBackList(props: {
+  waiting: readonly VoiceInboxEntry[]
+  selection: readonly string[]
+  onToggle: (entryId: string) => void
+  onSelectAll: () => void
+  onClearSelection: () => void
+  onDismiss: (entryIds: string[]) => void
+  onAnswer: () => void
+}) {
+  const allSelected = props.selection.length === props.waiting.length && props.waiting.length > 0
+  return (
+    <>
+      <header className={styles.incomingHeader}>
+        <div>
+          <div className={styles.eyebrow}>DSH 实时语音</div>
+          <div className={styles.phaseLine}>
+            <span className={styles.ringDot} />
+            {props.waiting.length} 个任务已完成，等待汇报
+          </div>
+        </div>
+        <button
+          type="button"
+          className={styles.iconButton}
+          aria-label="清空选择"
+          title="清空选择"
+          onClick={props.onClearSelection}
+        >×</button>
+      </header>
+      <ul className={styles.incomingList}>
+        {props.waiting.map((entry) => {
+          const checked = props.selection.includes(entry.id)
+          return (
+            <li className={styles.incomingRow} key={entry.id}>
+              <label className={styles.incomingLabel}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => props.onToggle(entry.id)}
+                />
+                <span className={styles.incomingTitle}>{entry.sessionTitle ?? entry.request.slice(0, 40)}</span>
+              </label>
+              <div className={styles.incomingMeta}>
+                <span className={styles.incomingStatus} data-status={entry.status}>{inboxStatusText(entry.status)}</span>
+                <span>{entry.sessionTitle === undefined ? entry.request.slice(0, 60) : entry.request.slice(0, 40)}</span>
+              </div>
+              <div className={styles.incomingActions}>
+                <span className={styles.incomingTime}>{inboxAgeText(entry.createdAt)} · {inboxDurationText(entry.durationMs)}</span>
+                <button
+                  type="button"
+                  className={styles.linkButton}
+                  onClick={() => props.onDismiss([entry.id])}
+                >已读</button>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      <footer className={styles.incomingFooter}>
+        <button type="button" className={styles.secondaryButton} onClick={props.onSelectAll}>
+          {allSelected ? '全不选' : '全选'}
+        </button>
+        <button
+          type="button"
+          className={styles.secondaryButton}
+          onClick={() => props.onDismiss(props.waiting.map(entry => entry.id))}
+        >全部已读</button>
+        <button
+          type="button"
+          className={styles.answerButton}
+          disabled={props.waiting.length === 0}
+          onClick={props.onAnswer}
+        >
+          {props.selection.length > 1 ? `接听并汇报 ${props.selection.length} 条` : '接听'}
+        </button>
+        <div className={styles.incomingHint}>
+          5 秒后自动静音，任务会留在列表里；想稍后再听时再点接听。
+        </div>
+      </footer>
+    </>
+  )
+}
+
+function inboxStatusText(status: VoiceInboxEntry['status']): string {
+  if (status === 'completed') return '已完成'
+  if (status === 'cancelled') return '已取消'
+  return '失败'
+}
+
+function inboxAgeText(createdAt: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - createdAt) / 1_000))
+  if (seconds < 60) return `${seconds} 秒前`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+  return `${Math.round(minutes / 60)} 小时前`
+}
+
+function inboxDurationText(durationMs: number): string {
+  const seconds = Math.round(durationMs / 1_000)
+  if (seconds < 60) return `耗时 ${seconds} 秒`
+  return `耗时 ${Math.round(seconds / 60)} 分钟`
 }
 
 function phaseText(phase: VoiceSnapshot['phase']): string {

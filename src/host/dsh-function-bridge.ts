@@ -8,6 +8,7 @@ import {
 } from '../direct-protocol.ts'
 import {
   DshVoiceCoordinator,
+  type HandoffRecord,
   type PendingVoiceApproval,
   type PendingVoiceQuestion,
   type VoiceQuestionAnswer,
@@ -41,6 +42,20 @@ export interface DshFunctionBridgeCallbacks {
   onQuestionResolved?: (question: PendingVoiceQuestion) => void
 }
 
+export interface DshFunctionBridgeOptions {
+  /**
+   * Resolves the operator-configured reporting guidance for one handoff.
+   * Injected so the bridge stays client-neutral and unit-testable; the
+   * implementation must never reject, since guidance is optional metadata.
+   */
+  resolveGuidance?: () => Promise<{ body?: string }>
+  /**
+   * Notified after a handoff was accepted by DSH, so a root-lifetime surface
+   * can remember the task and call the user back when it finishes.
+   */
+  onHandoff?: (handoff: HandoffRecord) => void
+}
+
 /** Client-neutral, idempotent semantic bridge from a provider Function Call to DSH. */
 export class DshFunctionBridge {
   constructor(
@@ -48,6 +63,7 @@ export class DshFunctionBridge {
     private readonly receipts: Map<string, DshFunctionReceipt> = new Map(),
     private readonly callbacks: DshFunctionBridgeCallbacks = {},
     private readonly interactionReceipts: Map<string, DshInteractionReceipt> = new Map(),
+    private readonly options: DshFunctionBridgeOptions = {},
   ) {}
 
   async execute(
@@ -159,7 +175,15 @@ export class DshFunctionBridge {
     switch (name) {
       case 'handoff_to_dsh_agent': {
         assertOnlyKeys(args, ['instruction'])
-        const handoff = await this.coordinator.handoff(requiredString(args, 'instruction', 12_000), spokenInput)
+        const guidance = await this.resolveGuidance()
+        const handoff = await this.coordinator.handoff(
+          requiredString(args, 'instruction', 12_000),
+          spokenInput,
+          guidance === undefined ? {} : { guidance },
+        )
+        // A deduplicated replay refers to work already being tracked; letting
+        // it through would overwrite the original watch's timestamp.
+        if (handoff.deduplicated !== true) this.options.onHandoff?.(handoff)
         return {
           status: 'accepted',
           handoff_id: handoff.handoffId,
@@ -192,6 +216,18 @@ export class DshFunctionBridge {
         assertOnlyKeys(args, ['request_id', 'answers'])
         return this.answerQuestion(requiredString(args, 'request_id', 256), parseQuestionAnswers(args.answers))
       }
+    }
+  }
+
+  /** Guidance is optional metadata: a failure here must never drop the request. */
+  private async resolveGuidance(): Promise<string | undefined> {
+    if (this.options.resolveGuidance === undefined) return undefined
+    try {
+      const resolved = await this.options.resolveGuidance()
+      const body = resolved?.body?.trim()
+      return body === undefined || body === '' ? undefined : body
+    } catch {
+      return undefined
     }
   }
 }

@@ -10,8 +10,13 @@ export interface VoiceOverlayInjected {
     cancelResponse: () => void;
     answerApproval: (approvalId: string, outcome: 'allowed-once' | 'rejected') => void;
     answerQuestion: (requestId: string, answers: VoiceQuestionAnswer[]) => void;
+    answerInbox: (sessionId?: string) => void;
+    toggleInboxSelection: (entryId: string) => void;
+    selectAllInbox: () => void;
+    clearInboxSelection: () => void;
+    dismissInbox: (entryIds: string[]) => void;
     openSession: (sessionId: string) => void;
 }
 export type VoiceOverlayProps = PropsRuntime<'shell.overlay'> & InjectFace<VoiceOverlayInjected>;
 /** Root-level movable call surface that remains visible while the user changes DSH sessions. */
-export declare function VoiceOverlay({ useVoice, useSessions, end, toggleMute, cancelResponse, answerApproval, answerQuestion, openSession, }: VoiceOverlayProps): import("react").JSX.Element | null;
+export declare function VoiceOverlay({ useVoice, useSessions, end, toggleMute, cancelResponse, answerApproval, answerQuestion, answerInbox, toggleInboxSelection, selectAllInbox, clearInboxSelection, dismissInbox, openSession, }: VoiceOverlayProps): import("react").JSX.Element | null;

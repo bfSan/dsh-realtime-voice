@@ -4,6 +4,7 @@ import type WebSocket from 'ws';
 import { type VoiceHello, type VoiceReady } from '../protocol.ts';
 import type { VoiceConfig } from './config.ts';
 import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts';
+import type { VoiceInbox } from './voice-inbox.ts';
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export declare class VoiceConnection {
     private readonly ctx;
@@ -12,6 +13,7 @@ export declare class VoiceConnection {
     private readonly config;
     private readonly onClosed;
     private readonly runtime;
+    private readonly inbox;
     private readonly provisionalId;
     private continuity;
     private serverSeq;
@@ -55,10 +57,20 @@ export declare class VoiceConnection {
     private readonly pendingAssistantByTurn;
     private readonly progressGate;
     private readonly progressCoalescer;
-    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime);
+    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined);
     get id(): string;
     dispose(reason?: string): void;
     private receive;
+    /**
+     * Speak the tasks the user selected from the call-back list, in the order
+     * they were selected. Entries are marked delivered here rather than by the
+     * browser so a dropped ack cannot make the same task ring twice.
+     *
+     * The selected reports travel as one announcement on purpose: the provider
+     * queue only holds a handful of pending injections, so emitting one per task
+     * would silently drop the tail of a long selection.
+     */
+    private deliverInboxEntries;
     private start;
     private onProviderEvent;
     /** Execute only the small semantic bridge vocabulary exposed to Qwen. */

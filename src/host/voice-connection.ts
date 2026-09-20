@@ -39,6 +39,8 @@ import { DshFunctionBridge } from './dsh-function-bridge.ts'
 import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.ts'
 import { ProgressAnnouncementGate } from './progress-gate.ts'
 import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
+import { resolveHandoffGuidance } from './handoff-guidance.ts'
+import type { VoiceInbox } from './voice-inbox.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
@@ -111,6 +113,7 @@ export class VoiceConnection {
     private readonly config: VoiceConfig,
     private readonly onClosed: () => void,
     private readonly runtime: VoiceRuntime = new VoiceRuntime(),
+    private readonly inbox: VoiceInbox | undefined = undefined,
   ) {
     this.progressGate = new ProgressAnnouncementGate({
       mode: config.progressReporting,
@@ -229,6 +232,12 @@ export class VoiceConnection {
       case 'voice.commit':
         this.provider?.commitAudio()
         return
+      case 'voice.inbox-deliver':
+        this.deliverInboxEntries(parsed.entryIds)
+        return
+      case 'voice.inbox-read':
+        this.inbox?.markDelivered(parsed.entryIds)
+        return
       case 'voice.approval-answer':
         await this.answerApproval(parsed.approvalId, parsed.outcome)
         return
@@ -240,6 +249,45 @@ export class VoiceConnection {
         this.send({ type: 'voice.pong', serverSeq: this.nextSeq(), sentAt: parsed.sentAt })
         return
     }
+  }
+
+  /**
+   * Speak the tasks the user selected from the call-back list, in the order
+   * they were selected. Entries are marked delivered here rather than by the
+   * browser so a dropped ack cannot make the same task ring twice.
+   *
+   * The selected reports travel as one announcement on purpose: the provider
+   * queue only holds a handful of pending injections, so emitting one per task
+   * would silently drop the tail of a long selection.
+   */
+  private deliverInboxEntries(entryIds: readonly string[]): void {
+    const inbox = this.inbox
+    if (inbox === undefined) return
+    const selected = inbox.list().filter(entry => entryIds.includes(entry.id))
+    if (selected.length === 0) return
+    inbox.markDelivered(selected.map(entry => entry.id))
+    const ordered = entryIds
+      .map(id => selected.find(entry => entry.id === id))
+      .filter((entry): entry is (typeof selected)[number] => entry !== undefined)
+    // The provider truncates an injected announcement, so divide the budget
+    // across the selection instead of letting the last reports fall off.
+    const perEntryBudget = Math.max(120, Math.floor(3_400 / ordered.length))
+    const reports = ordered.map((entry, index) => {
+      const tag = entry.status === 'completed' ? 'COMPLETE' : entry.status === 'cancelled' ? 'CANCELLED' : 'FAILED'
+      const title = entry.sessionTitle === undefined ? '' : `，来自任务「${entry.sessionTitle}」`
+      return `${index + 1}. [${tag}]${title}：${entry.summary.slice(0, perEntryBudget)}`
+    }).join('\n')
+    const single = ordered.length === 1
+    this.progressCoalescer.settle({
+      id: `inbox_${ordered.map(entry => entry.id).join('_')}`,
+      text: `[COMPLETE] 用户挂断后完成的任务结果，共 ${ordered.length} 条：\n${reports}\n${
+        single
+          ? '这是用户刚从回拨列表里选中的任务。请用一两句话汇报结论，不要重复提交这个任务。'
+          : '这些是用户刚从回拨列表里按顺序选中的任务。请按顺序逐条用一两句话汇报结论，不要重复提交这些任务。'
+      }`,
+      body: reports,
+      kind: 'complete',
+    })
   }
 
   private async start(hello: VoiceHello): Promise<void> {
@@ -281,7 +329,15 @@ export class VoiceConnection {
     this.functionBridge = new DshFunctionBridge(coordinator, this.continuity.functionReceipts, {
       onApprovalResolved: (approval, outcome) => this.afterApprovalResolved(approval, outcome),
       onQuestionResolved: question => this.afterQuestionResolved(question),
-    }, this.continuity.interactionReceipts)
+    }, this.continuity.interactionReceipts, {
+      resolveGuidance: async () => await resolveHandoffGuidance(this.ctx, this.config, status.cwd === undefined ? {} : { cwd: status.cwd }),
+      onHandoff: handoff => this.inbox?.watch({
+        handoffId: handoff.handoffId,
+        sessionId: handoff.sessionId,
+        request: handoff.request,
+        ...(status.title === undefined ? {} : { sessionTitle: status.title }),
+      }),
+    })
     const credential = await this.ctx.credentials.resolve(credentialRef(this.config.apiKeyEnv))
     if (credential === undefined) {
       this.fail(
@@ -679,7 +735,11 @@ export class VoiceConnection {
         const text = this.pendingAssistantByTurn.get(key)
         this.pendingAssistantByTurn.delete(key)
         const reason = turnEndKind(data.reason)
-        this.coordinator?.markTurnEnded(turn, reason)
+        const ended = this.coordinator?.markTurnEnded(turn, reason) ?? []
+        // The user is on the call and about to hear this result. Mark the
+        // call-back entry delivered so hanging up does not ring them about
+        // news the live surface already spoke.
+        for (const record of ended) this.inbox?.markHandoffDelivered(record.handoffId)
         this.progressGate.markTurnEnded()
         this.dshTurnRunning = false
         this.refreshAgentWorkPending()

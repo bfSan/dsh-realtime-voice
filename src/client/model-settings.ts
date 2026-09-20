@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import {
+  DEFAULT_HANDOFF_SKILL_NAME,
   DEFAULT_REALTIME_VOICE_MODEL,
   DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
   DEFAULT_REALTIME_VOICE_TURN_DETECTION,
@@ -30,6 +31,8 @@ export interface VoiceModelSettingsValue {
   progressReporting?: RealtimeVoiceProgressReporting
   progressMinIntervalMs?: number
   progressQuietTaskMs?: number
+  handoffSkill?: string
+  handoffInstructions?: string
   apiKeyEnv?: string
 }
 
@@ -47,6 +50,8 @@ export interface VoiceModelSettingsSnapshot {
   progressReporting: RealtimeVoiceProgressReporting
   progressMinIntervalMs: number
   progressQuietTaskMs: number
+  handoffSkill: string
+  handoffInstructions: string
   saving: boolean
   error: string | undefined
   apiKeyRef: string
@@ -63,6 +68,8 @@ const DEFAULT_VAD_THRESHOLD = 0.35
 const DEFAULT_SILENCE_DURATION_MS = 500
 const DEFAULT_MAX_HISTORY_TURNS = 20
 const MAX_STYLE_PROMPT_LENGTH = 2_000
+const MAX_HANDOFF_SKILL_LENGTH = 128
+const MAX_HANDOFF_INSTRUCTIONS_LENGTH = 8_000
 
 /** Project one durable DSH settings namespace into an immediate two-model switch. */
 export class VoiceModelSettingsController implements HostObservable<VoiceModelSettingsSnapshot> {
@@ -80,6 +87,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     progressReporting: DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
     progressMinIntervalMs: DEFAULT_PROGRESS_MIN_INTERVAL_MS,
     progressQuietTaskMs: DEFAULT_PROGRESS_QUIET_TASK_MS,
+    handoffSkill: DEFAULT_HANDOFF_SKILL_NAME,
+    handoffInstructions: '',
     saving: false,
     error: undefined,
     apiKeyRef: DEFAULT_API_KEY_REF,
@@ -187,6 +196,25 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     await this.writeSetting('progressQuietTaskMs', progressQuietTaskMs, 'DSH 没有接受该静默阈值。')
   }
 
+  /**
+   * Name of a DSH skill that rides along with every execution handoff. Blank
+   * clears it. Non empty values are validated on the Host against the live
+   * skill registry, so a typo is reported in the transcript rather than
+   * silently ignored.
+   */
+  async setHandoffSkill(handoffSkill: string): Promise<void> {
+    const trimmed = handoffSkill.trim()
+    if (trimmed.length > MAX_HANDOFF_SKILL_LENGTH) return
+    if (trimmed !== '' && !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(trimmed)) return
+    await this.writeSetting('handoffSkill', trimmed, 'DSH 没有接受该汇报 Skill 设置。')
+  }
+
+  async setHandoffInstructions(handoffInstructions: string): Promise<void> {
+    const trimmed = handoffInstructions.trim()
+    if (trimmed.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH) return
+    await this.writeSetting('handoffInstructions', trimmed, 'DSH 没有接受该汇报指令。')
+  }
+
   /** One write path for the scalar settings that only need a value round-trip. */
   private async writeSetting<K extends keyof VoiceModelSettingsValue>(
     field: K,
@@ -266,6 +294,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     const progressReporting = scope.value?.progressReporting ?? DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING
     const progressMinIntervalMs = scope.value?.progressMinIntervalMs ?? DEFAULT_PROGRESS_MIN_INTERVAL_MS
     const progressQuietTaskMs = scope.value?.progressQuietTaskMs ?? DEFAULT_PROGRESS_QUIET_TASK_MS
+    const handoffSkill = scope.value?.handoffSkill ?? DEFAULT_HANDOFF_SKILL_NAME
+    const handoffInstructions = scope.value?.handoffInstructions ?? ''
     const previousRef = this.snapshot.apiKeyRef
     const apiKeyRef = this.apiKeyRef()
     this.publish({
@@ -287,6 +317,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
       progressReporting,
       progressMinIntervalMs,
       progressQuietTaskMs,
+      handoffSkill,
+      handoffInstructions,
       apiKeyRef,
       ...(apiKeyRef === previousRef ? {} : { apiKeyConfigured: false }),
     })
@@ -374,6 +406,13 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
   const rawStylePrompt = (value as Record<string, unknown>).stylePrompt
   if (rawStylePrompt !== undefined
     && (typeof rawStylePrompt !== 'string' || rawStylePrompt.length > MAX_STYLE_PROMPT_LENGTH)) return undefined
+  const rawHandoffSkill = (value as Record<string, unknown>).handoffSkill
+  if (rawHandoffSkill !== undefined
+    && (typeof rawHandoffSkill !== 'string' || rawHandoffSkill.length > MAX_HANDOFF_SKILL_LENGTH)) return undefined
+  const rawHandoffInstructions = (value as Record<string, unknown>).handoffInstructions
+  if (rawHandoffInstructions !== undefined
+    && (typeof rawHandoffInstructions !== 'string'
+      || rawHandoffInstructions.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH)) return undefined
   return {
     model,
     turnDetection,
@@ -386,6 +425,8 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
     progressReporting,
     progressMinIntervalMs,
     progressQuietTaskMs,
+    handoffSkill: rawHandoffSkill ?? DEFAULT_HANDOFF_SKILL_NAME,
+    handoffInstructions: rawHandoffInstructions ?? '',
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
   }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Config } from '../src/host/config.ts'
 import {
+  DEFAULT_HANDOFF_SKILL_NAME,
   DEFAULT_REALTIME_VOICE_VOICE,
   isRealtimeVoiceVoice,
   REALTIME_VOICE_MODELS,
@@ -192,6 +193,60 @@ describe('realtime voice model settings', () => {
 
     await controller.setProgressQuietTask(0)
     expect(controller.getSnapshot().progressQuietTaskMs).toBe(0)
+    controller.dispose()
+  })
+
+  it('persists the handoff reporting skill and inline guidance', async () => {
+    let snapshot = ready(REALTIME_VOICE_MODELS.plus)
+    const listeners = new Set<() => void>()
+    const scope = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: vi.fn(async (field: string, value: unknown) => {
+        snapshot = ready(snapshot.value!.model, snapshot.value!.turnDetection, {
+          ...snapshot.value,
+          [field]: value,
+        } as VoiceModelSettingsValue)
+        for (const listener of listeners) listener()
+      }),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    expect(controller.getSnapshot()).toMatchObject({
+      handoffSkill: DEFAULT_HANDOFF_SKILL_NAME,
+      handoffInstructions: '',
+    })
+
+    await controller.setHandoffSkill('  voice-supervisor  ')
+    expect(scope.set).toHaveBeenCalledWith('handoffSkill', 'voice-supervisor')
+    expect(controller.getSnapshot().handoffSkill).toBe('voice-supervisor')
+
+    await controller.setHandoffInstructions('  先说结论。  ')
+    expect(scope.set).toHaveBeenCalledWith('handoffInstructions', '先说结论。')
+    expect(controller.getSnapshot().handoffInstructions).toBe('先说结论。')
+    controller.dispose()
+  })
+
+  it('rejects oversized handoff guidance instead of writing it', async () => {
+    const scope = {
+      getSnapshot: () => ready(REALTIME_VOICE_MODELS.plus),
+      subscribe: () => () => {},
+      set: vi.fn(),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    await controller.setHandoffSkill('a'.repeat(200))
+    await controller.setHandoffInstructions('b'.repeat(8_001))
+    expect(scope.set).not.toHaveBeenCalled()
     controller.dispose()
   })
 
