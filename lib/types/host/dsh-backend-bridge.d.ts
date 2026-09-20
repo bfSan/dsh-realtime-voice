@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { DirectBackendEventKind } from '../direct-protocol.ts';
 import { DshVoiceCoordinator, type PendingVoiceApproval, type PendingVoiceQuestion } from './dsh-coordinator.ts';
+import type { VoiceConfig } from './config.ts';
 export interface DshBackendEvent {
     eventId: string;
     kind: DirectBackendEventKind;
@@ -28,7 +29,8 @@ export declare class DshBackendBridge {
     private activeDshJobs;
     private started;
     private readonly retryTimers;
-    constructor(ctx: Context, sessionId: string, coordinator: DshVoiceCoordinator, callbacks: DshBackendBridgeCallbacks);
+    private readonly progressGate;
+    constructor(ctx: Context, sessionId: string, coordinator: DshVoiceCoordinator, callbacks: DshBackendBridgeCallbacks, config: VoiceConfig);
     setCallbacks(callbacks: DshBackendBridgeCallbacks): void;
     start(): Promise<void>;
     emitCurrentStatus(): void;

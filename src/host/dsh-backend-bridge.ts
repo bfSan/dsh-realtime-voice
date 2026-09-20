@@ -8,6 +8,8 @@ import {
   type PendingVoiceQuestion,
 } from './dsh-coordinator.ts'
 import { assistantText, DshVoiceSession } from './dsh-session-state.ts'
+import type { VoiceConfig } from './config.ts'
+import { ProgressAnnouncementGate } from './progress-gate.ts'
 
 export interface DshBackendEvent {
   eventId: string
@@ -31,14 +33,21 @@ export class DshBackendBridge {
   private activeDshJobs = 0
   private started = false
   private readonly retryTimers = new Map<'host' | 'mux', ReturnType<typeof setTimeout>>()
+  private readonly progressGate: ProgressAnnouncementGate
 
   constructor(
     private readonly ctx: Context,
     private readonly sessionId: string,
     readonly coordinator: DshVoiceCoordinator,
     callbacks: DshBackendBridgeCallbacks,
+    config: VoiceConfig,
   ) {
     this.callbacks = callbacks
+    this.progressGate = new ProgressAnnouncementGate({
+      mode: config.progressReporting,
+      minIntervalMs: config.progressMinIntervalMs,
+      quietTaskMs: config.progressQuietTaskMs,
+    })
   }
 
   setCallbacks(callbacks: DshBackendBridgeCallbacks): void {
@@ -179,6 +188,7 @@ export class DshBackendBridge {
     }
     if (event.type === 'turn/start') {
       if (typeof data?.turn === 'number') this.coordinator.markTurnStarted(data.turn)
+      this.progressGate.markTurnStarted()
       this.dshTurnRunning = true
       this.emitAgentStatus()
       return
@@ -190,11 +200,15 @@ export class DshBackendBridge {
         this.coordinator.observeTurnEvent(turn)
         this.pendingAssistantByTurn.set(turn, text)
         this.emitAgentStatus(text.slice(0, 1_200))
-        this.callbacks.onBackendEvent({
-          eventId: `dsh:${this.sessionId}:event:${String(event.seq ?? turn)}:status`,
-          kind: 'status',
-          text: `[BACKEND][STATUS] ${text}\n这是执行中的阶段更新，不是最终完成。`,
-        })
+        // Direct media clients get the same convergence as the WebUI path:
+        // a stage update becomes speech only when the gate lets it through.
+        if (this.progressGate.decide()) {
+          this.callbacks.onBackendEvent({
+            eventId: `dsh:${this.sessionId}:event:${String(event.seq ?? turn)}:status`,
+            kind: 'status',
+            text: `[BACKEND][STATUS] ${text}\n这是执行中的阶段更新，不是最终完成。`,
+          })
+        }
       }
       return
     }
@@ -206,6 +220,7 @@ export class DshBackendBridge {
     const text = this.pendingAssistantByTurn.get(data.turn)
     this.pendingAssistantByTurn.delete(data.turn)
     this.coordinator.markTurnEnded(data.turn, reason)
+    this.progressGate.markTurnEnded()
     this.dshTurnRunning = false
     this.emitAgentStatus(text?.slice(0, 1_200))
     const kind = reason === 'completed' ? 'complete' : reason

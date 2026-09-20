@@ -253,7 +253,13 @@ export class DirectControlConnection {
 
     const backendCallbacks = this.backendCallbacks()
     if (this.direct.backendBridge === undefined) {
-      this.direct.backendBridge = new DshBackendBridge(this.ctx, hello.target.sessionId, coordinator, backendCallbacks)
+      this.direct.backendBridge = new DshBackendBridge(
+        this.ctx,
+        hello.target.sessionId,
+        coordinator,
+        backendCallbacks,
+        this.config,
+      )
     } else {
       this.direct.backendBridge.setCallbacks(backendCallbacks)
     }
