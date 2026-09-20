@@ -639,6 +639,36 @@
   font-size: 13px;
 }
 
+.voicePreviewRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voicePreviewRow .selectInput {
+  min-width: 0;
+  flex: 1;
+}
+
+.previewButton {
+  height: 34px;
+  min-width: 68px;
+  flex: none;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2, var(--dsw-alias-border-subtle));
+  border-radius: 8px;
+  color: var(--dsw-alias-brand-primary, #3964fe);
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-surface-primary));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.previewButton:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
 .selectInput:disabled {
   opacity: .5;
 }

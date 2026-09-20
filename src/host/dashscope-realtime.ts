@@ -158,7 +158,11 @@ export class DashScopeRealtime {
   }
 
   /** Return a completed Function Call without blocking the live conversation. */
-  completeFunctionCall(callId: string, output: unknown): void {
+  completeFunctionCall(
+    callId: string,
+    output: unknown,
+    options: { requestResponse?: boolean } = {},
+  ): void {
     if (this.closed) return
     this.send({
       type: 'conversation.item.create',
@@ -168,7 +172,7 @@ export class DashScopeRealtime {
         output: JSON.stringify(output),
       },
     })
-    this.requestResponseAfterCurrent()
+    if (options.requestResponse !== false) this.requestResponseAfterCurrent()
   }
 
   /**

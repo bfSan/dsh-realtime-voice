@@ -48,6 +48,7 @@ import { isSupervisorHello, parseSupervisorArguments, SUPERVISOR_TOOLS, SUPERVIS
 import type { VoiceTaskDirectory } from './voice-task-directory.ts'
 import { VoiceSupervisor } from './voice-supervisor.ts'
 import { resolveSupervisorGuidance } from './supervisor-guidance.ts'
+import { isReadOnlyReportIntent } from './voice-intent.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
@@ -781,6 +782,15 @@ export class VoiceConnection {
     // must not create a second function_call_output item. The shared bridge still
     // supplies continuity-scoped execution idempotency across reconnects.
     this.handledProviderFunctionCalls.add(callId)
+    if (name === 'handoff_to_dsh_agent' && isReadOnlyReportIntent(this.latestUserTranscript)) {
+      this.reportReadOnly = true
+      this.provider?.updateTools(this.callTools(true))
+      this.provider?.completeFunctionCall(callId, {
+        status: 'needs-clarification',
+        message: '用户只要求口头汇报已有结果。请使用任务查询工具读取权威结果；不要创建、改写或合并文件。',
+      })
+      return
+    }
     if (this.reportReadOnly && (name === 'handoff_to_dsh_agent' || name === 'cancel_dsh_agent')) {
       this.provider?.completeFunctionCall(callId, { status: 'needs-clarification', message: '当前只汇报结果。请等待用户提出新的执行要求。' })
       return
@@ -794,7 +804,11 @@ export class VoiceConnection {
       this.providerFunctionScope,
     )
     this.refreshAgentWorkPending()
-    this.provider?.completeFunctionCall(callId, result.output)
+    this.provider?.completeFunctionCall(
+      callId,
+      result.output,
+      { requestResponse: !isDuplicateHandoffOutput(result.output) },
+    )
     this.send({
       type: 'voice.tool',
       serverSeq: this.nextSeq(),
@@ -1518,6 +1532,13 @@ function functionErrorMessage(output: unknown): string {
   if (typeof output !== 'object' || output === null) return 'DSH 语义桥执行失败。'
   const error = (output as Record<string, unknown>).error
   return typeof error === 'string' ? error.slice(0, 512) : 'DSH 语义桥执行失败。'
+}
+
+function isDuplicateHandoffOutput(output: unknown): boolean {
+  return typeof output === 'object'
+    && output !== null
+    && !Array.isArray(output)
+    && (output as { duplicate?: unknown }).duplicate === true
 }
 
 function messageSourceRpcId(value: unknown): string | undefined {

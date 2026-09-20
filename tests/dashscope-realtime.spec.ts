@@ -151,6 +151,27 @@ describe('DashScope realtime provider', () => {
     provider.close()
   })
 
+  it('settles a duplicate Function Call without starting another model response', async () => {
+    const socket = new FakeSocket()
+    const provider = createProvider(socket)
+    await provider.connect()
+    socket.event({ type: 'response.created', response: { id: 'duplicate-response' } })
+
+    provider.completeFunctionCall(
+      'call-duplicate',
+      { status: 'accepted', handoff_id: 'handoff-1', duplicate: true },
+      { requestResponse: false },
+    )
+    socket.event({ type: 'response.done', response: { id: 'duplicate-response' } })
+
+    expect(socket.sent.filter(message => message.type === 'conversation.item.create')).toContainEqual({
+      type: 'conversation.item.create',
+      item: expect.objectContaining({ call_id: 'call-duplicate', type: 'function_call_output' }),
+    })
+    expect(socket.sent.filter(message => message.type === 'response.create')).toHaveLength(0)
+    provider.close()
+  })
+
   it('queues and deduplicates authoritative DSH updates until Qwen is idle', async () => {
     const socket = new FakeSocket()
     const provider = createProvider(socket)

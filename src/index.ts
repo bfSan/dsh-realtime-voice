@@ -14,6 +14,7 @@ import { WebSocketServer } from 'ws'
 import {
   VOICE_DIRECT_PROTOCOL,
   VOICE_INBOX_ROUTE,
+  VOICE_PREVIEW_ROUTE,
   VOICE_PROTOCOL,
   VOICE_ROUTE,
   VOICE_STATUS_ROUTE,
@@ -32,6 +33,7 @@ import type { HandoffGuidanceRuntime } from './host/handoff-guidance.ts'
 import { InboxPersistence, parseStoredInbox, type InboxGlobal } from './host/inbox-persistence.ts'
 import { VoiceTaskDirectory, type VoiceProject, type VoiceAgent } from './host/voice-task-directory.ts'
 import { VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
+import { createVoicePreviewHandler } from './host/voice-preview-route.ts'
 
 export { Config }
 export type { VoiceConfig }
@@ -301,6 +303,15 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     const unregisterStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_STATUS_ROUTE, handler: status })
     const unregisterDirectStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE, handler: status })
     const unregisterInbox = ctx.webServer.register({ kind: 'exact', path: VOICE_INBOX_ROUTE, handler: callbacks })
+    const unregisterPreview = ctx.webServer.register({
+      kind: 'exact',
+      path: VOICE_PREVIEW_ROUTE,
+      handler: createVoicePreviewHandler(
+        ctx,
+        () => readConfig(),
+        request => isLoopback(request.socket.remoteAddress) && isAllowedOrigin(request),
+      ),
+    })
     const unregister = ctx.webServer.registerUpgrade({ path: VOICE_ROUTE, handler: upgradeProxy })
     const unregisterDirect = ctx.webServer.registerUpgrade({ path: VOICE_DIRECT_ROUTE, handler: upgradeDirect })
     return async () => {
@@ -308,6 +319,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
       unregisterDirect()
       unregister()
       unregisterInbox()
+      unregisterPreview()
       unregisterDirectStatus()
       unregisterStatus()
       for (const connection of [...connections]) connection.dispose()

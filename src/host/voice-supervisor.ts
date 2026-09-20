@@ -1,5 +1,6 @@
 import { parseSupervisorArguments } from '../supervisor-protocol.ts'
 import type { VoiceTaskDirectory } from './voice-task-directory.ts'
+import { isReadOnlyReportIntent } from './voice-intent.ts'
 
 export interface SupervisorActions {
   select(taskId: string): Promise<void> | void
@@ -44,7 +45,7 @@ export class VoiceSupervisor {
         await this.select(args.taskId!)
         return { status: 'selected', taskId: this.selectedTask }
       case 'create_voice_task': {
-        if (!this.turn || isOralReport(this.turn.text)) return { status: 'needs-clarification', message: '请先询问用户要创建什么任务、使用哪个项目和 Agent。' }
+        if (!this.turn || isReadOnlyReportIntent(this.turn.text)) return { status: 'needs-clarification', message: '请先询问用户要创建什么任务、使用哪个项目和 Agent。' }
         const task = await this.directory.createTask({
           workspace: args.workspace!, presetId: args.presetId!,
           requestId: `${this.callId}:${this.turn.id}:create`,
@@ -56,7 +57,7 @@ export class VoiceSupervisor {
       case 'cancel_voice_task': {
         if (this.selecting) return { status: 'needs-clarification', message: '请等待任务切换完成，再确认工作对象。' }
         if (!this.selectedTask) return { status: 'needs-selection', message: '请先确认要安排或停止哪个任务。' }
-        if (!this.turn || isOralReport(this.turn.text)) {
+        if (!this.turn || isReadOnlyReportIntent(this.turn.text)) {
           return { status: 'needs-clarification', message: '先确认汇报对象；听汇报请读取任务结果，不得改写为文件操作。执行工作需要用户明确下达新的要求。' }
         }
         const key = `${this.callId}:${this.turn.id}`
@@ -72,8 +73,4 @@ export class VoiceSupervisor {
       default: throw new Error('Unknown supervisor tool')
     }
   }
-}
-
-function isOralReport(text: string): boolean {
-  return /^(请|帮我|给我|再|你)?(汇报|汇报一下|说一下进展|工作汇报|汇报工作)(啊|呀|吧|一下|。|！|？|\s)*$/.test(text)
 }

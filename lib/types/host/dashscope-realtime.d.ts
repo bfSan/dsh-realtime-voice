@@ -45,7 +45,9 @@ export declare class DashScopeRealtime {
     commitAudio(): void;
     cancelResponse(): void;
     /** Return a completed Function Call without blocking the live conversation. */
-    completeFunctionCall(callId: string, output: unknown): void;
+    completeFunctionCall(callId: string, output: unknown, options?: {
+        requestResponse?: boolean;
+    }): void;
     /**
      * Inject an authoritative backend event into the Realtime conversation.
      * Qwen turns the tagged event into a short spoken update; it never treats it

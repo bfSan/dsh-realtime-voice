@@ -1,6 +1,6 @@
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   REALTIME_VOICE_MODELS,
   REALTIME_VOICE_PROGRESS_REPORTING,
@@ -13,6 +13,7 @@ import {
   type RealtimeVoiceVoice,
 } from '../models.ts'
 import type { VoiceModelSettingsSnapshot } from './model-settings.ts'
+import { VOICE_PREVIEW_ROUTE } from '../protocol.ts'
 import styles from './voice.module.css'
 
 export interface VoiceSettingsCardInjected {
@@ -62,6 +63,64 @@ export function VoiceSettingsCard({
 }: VoiceSettingsCardProps) {
   const state = useVoiceModelSettings(snapshot => snapshot)
   const [apiKey, setApiKey] = useState('')
+  const [preview, setPreview] = useState<{ phase: 'idle' | 'loading' | 'playing'; error?: string }>({ phase: 'idle' })
+  const previewAudio = useRef<HTMLAudioElement | undefined>(undefined)
+  const previewUrl = useRef<string | undefined>(undefined)
+  const previewAbort = useRef<AbortController | undefined>(undefined)
+  const stopPreview = () => {
+    previewAbort.current?.abort()
+    previewAbort.current = undefined
+    previewAudio.current?.pause()
+    previewAudio.current = undefined
+    if (previewUrl.current !== undefined) URL.revokeObjectURL(previewUrl.current)
+    previewUrl.current = undefined
+    setPreview({ phase: 'idle' })
+  }
+  useEffect(() => () => {
+    previewAbort.current?.abort()
+    previewAudio.current?.pause()
+    if (previewUrl.current !== undefined) URL.revokeObjectURL(previewUrl.current)
+  }, [])
+  const togglePreview = async () => {
+    if (preview.phase !== 'idle') {
+      stopPreview()
+      return
+    }
+    const abort = new AbortController()
+    previewAbort.current = abort
+    setPreview({ phase: 'loading' })
+    try {
+      const response = await fetch(VOICE_PREVIEW_ROUTE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: state.model, voice: state.voice }),
+        signal: abort.signal,
+      })
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => ({}))
+        const message = typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+          ? body.error
+          : '音色试听失败，请稍后重试。'
+        throw new Error(message)
+      }
+      const url = URL.createObjectURL(await response.blob())
+      previewUrl.current = url
+      const audio = new Audio(url)
+      previewAudio.current = audio
+      audio.onended = stopPreview
+      audio.onerror = () => {
+        stopPreview()
+        setPreview({ phase: 'idle', error: '试听音频无法播放。' })
+      }
+      await audio.play()
+      previewAbort.current = undefined
+      setPreview({ phase: 'playing' })
+    } catch (error) {
+      if (abort.signal.aborted) return
+      stopPreview()
+      setPreview({ phase: 'idle', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
   if (!state.available) return null
   const disabled = !state.writable || state.saving
   return (
@@ -128,20 +187,35 @@ export function VoiceSettingsCard({
           <div className={styles.settingsLabel}>音色与通话参数</div>
           <label className={styles.selectField}>
             <span className={styles.numberFieldLabel}>播报音色</span>
-            <select
-              className={styles.selectInput}
-              value={state.voice}
-              disabled={disabled}
-              onChange={event => selectVoice(event.target.value as RealtimeVoiceVoice)}
-            >
-              {REALTIME_VOICE_VOICES.map(voice => (
-                <option key={voice} value={voice}>{realtimeVoiceVoiceLabel(voice)}</option>
-              ))}
-            </select>
+            <span className={styles.voicePreviewRow}>
+              <select
+                className={styles.selectInput}
+                value={state.voice}
+                disabled={disabled}
+                onChange={event => {
+                  if (preview.phase !== 'idle') stopPreview()
+                  selectVoice(event.target.value as RealtimeVoiceVoice)
+                }}
+              >
+                {REALTIME_VOICE_VOICES.map(voice => (
+                  <option key={voice} value={voice}>{realtimeVoiceVoiceLabel(voice)}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className={styles.previewButton}
+                aria-label="试听当前音色"
+                disabled={!state.apiKeyConfigured}
+                onClick={() => { void togglePreview() }}
+              >
+                {preview.phase === 'loading' ? '生成中…' : preview.phase === 'playing' ? '停止' : '试听'}
+              </button>
+            </span>
           </label>
           <p className={styles.settingsHint}>
-            音色只能在建立连接时设置一次；已进行的通话不受影响。
+            音色只能在建立连接时设置一次；已进行的通话不受影响。试听使用固定短句，不会创建 DSH 任务。
           </p>
+          {preview.error === undefined ? null : <p className={styles.settingsError} role="alert">{preview.error}</p>}
           <div className={styles.numberRow}>
             <NumberField
               label="VAD 灵敏度（-1 ~ 1）"

@@ -6,7 +6,8 @@ export declare const VOICE_PROTOCOL_VERSION: 1;
 export declare const VOICE_ROUTE: "/plugins/realtime-voice/v1";
 export declare const VOICE_STATUS_ROUTE: "/plugins/realtime-voice/v1/status";
 export declare const VOICE_INBOX_ROUTE: "/plugins/realtime-voice/v1/inbox";
-export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.19";
+export declare const VOICE_PREVIEW_ROUTE: "/plugins/realtime-voice/v1/preview";
+export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.20";
 /**
  * One handoff the voice surface owes the user a conversation about.
  *
