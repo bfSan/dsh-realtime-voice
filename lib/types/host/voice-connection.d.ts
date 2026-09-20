@@ -6,6 +6,7 @@ import type { VoiceConfig } from './config.ts';
 import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts';
 import { type HandoffGuidanceRuntime } from './handoff-guidance.ts';
 import type { VoiceInbox } from './voice-inbox.ts';
+import type { VoiceTaskDirectory } from './voice-task-directory.ts';
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export declare class VoiceConnection {
     private readonly ctx;
@@ -16,6 +17,11 @@ export declare class VoiceConnection {
     private readonly runtime;
     private readonly inbox;
     private readonly guidanceRuntime;
+    private readonly directory?;
+    private supervisorMode;
+    private supervisor;
+    private userTurnSequence;
+    private reportReadOnly;
     private readonly provisionalId;
     private continuity;
     private serverSeq;
@@ -57,9 +63,17 @@ export declare class VoiceConnection {
     private helloTimer;
     private hostEventsAbort;
     private readonly pendingAssistantByTurn;
+    private readonly reportDelivery;
+    private readonly reportAttempts;
+    private readonly responseAttempts;
+    private readonly streamAttempts;
+    private readonly attemptFinalSequences;
+    private readonly reportHandoffs;
+    private trace;
+    private confirmReport;
     private readonly progressGate;
     private readonly progressCoalescer;
-    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime);
+    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime, directory?: VoiceTaskDirectory | undefined);
     get id(): string;
     dispose(reason?: string): void;
     private receive;
@@ -83,6 +97,9 @@ export declare class VoiceConnection {
      */
     private deliverPendingInteractions;
     private start;
+    private bindTask;
+    private callTools;
+    private bindSupervisorTask;
     private onProviderEvent;
     /** Execute only the small semantic bridge vocabulary exposed to Qwen. */
     private handleFunctionCall;

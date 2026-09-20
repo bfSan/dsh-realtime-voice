@@ -27,6 +27,8 @@ export interface VoiceConfig {
     handoffSkill: string;
     /** Ad-hoc rules appended after the configured skill body. */
     handoffInstructions: string;
+    supervisorSkill: string;
+    supervisorInstructions: string;
     /**
      * How long an incoming report rings before falling silent. The report stays
      * in the call-back list either way; zero disables the sound entirely.

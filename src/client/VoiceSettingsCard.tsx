@@ -30,6 +30,8 @@ export interface VoiceSettingsCardInjected {
   setProgressQuietTask: (value: number) => void
   setHandoffSkill: (value: string) => void
   setHandoffInstructions: (value: string) => void
+  setSupervisorSkill: (value: string) => void
+  setSupervisorInstructions: (value: string) => void
   setRingDuration: (value: number) => void
   saveApiKey: (value: string) => Promise<boolean>
 }
@@ -53,6 +55,8 @@ export function VoiceSettingsCard({
   setProgressQuietTask,
   setHandoffSkill,
   setHandoffInstructions,
+  setSupervisorSkill,
+  setSupervisorInstructions,
   setRingDuration,
   saveApiKey,
 }: VoiceSettingsCardProps) {
@@ -266,6 +270,16 @@ export function VoiceSettingsCard({
             临时补充的汇报要求，追加在 Skill 正文之后，适合这次不想改 Skill 的微调。
             它只影响汇报与规划，不覆盖你的指令、会话权限或工具结果。
           </p>
+        </div>
+        <div className={styles.settingsSubsection}>
+          <div className={styles.settingsLabel}>语音总管沟通指导</div>
+          <SkillNameField value={state.supervisorSkill} disabled={disabled} commit={setSupervisorSkill} />
+          <p className={styles.settingsHint}>
+            可留空使用默认规则。支持已选项目中的 Skill 名或 markdown 文件绝对路径。
+            用于指导语音模型如何确认对象、查询结果和安排工作，与执行 Agent 的指导分开。
+            加载失败会在通话中显示提示；切换项目会重新加载。
+          </p>
+          <HandoffInstructionsField value={state.supervisorInstructions} disabled={disabled} commit={setSupervisorInstructions} />
         </div>
         <div className={styles.settingsSubsection}>
           <div className={styles.settingsLabel}>回拨振铃</div>

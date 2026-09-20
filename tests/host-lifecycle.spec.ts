@@ -42,15 +42,15 @@ describe('Host plugin lifecycle', () => {
     expect(registerUpgrade).toHaveBeenCalledTimes(2)
     expect(registerUpgrade.mock.calls[0]?.[0]).toMatchObject({ path: VOICE_ROUTE })
     expect(registerUpgrade.mock.calls[1]?.[0]).toMatchObject({ path: VOICE_DIRECT_ROUTE })
-    expect(register).toHaveBeenCalledTimes(3)
-    expect(register.mock.calls[0]?.[0]).toMatchObject({ kind: 'exact', path: `${VOICE_ROUTE}/status` })
-    expect(register.mock.calls[1]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE })
-    expect(register.mock.calls[2]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_INBOX_ROUTE })
+    expect(register).toHaveBeenCalledTimes(4)
+    expect(register.mock.calls[1]?.[0]).toMatchObject({ kind: 'exact', path: `${VOICE_ROUTE}/status` })
+    expect(register.mock.calls[2]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE })
+    expect(register.mock.calls[3]?.[0]).toMatchObject({ kind: 'exact', path: VOICE_INBOX_ROUTE })
     expect(lifecycle).toBeTypeOf('function')
 
     await lifecycle?.()
     expect(unregister).toHaveBeenCalledTimes(2)
-    expect(unregisterStatus).toHaveBeenCalledTimes(3)
+    expect(unregisterStatus).toHaveBeenCalledTimes(4)
   })
 
   it('serves the call-back inbox over loopback only, and dismisses by id', async () => {

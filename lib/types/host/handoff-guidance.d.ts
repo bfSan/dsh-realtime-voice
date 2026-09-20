@@ -51,5 +51,5 @@ export declare function looksLikeGuidancePath(value: string): boolean;
  * Every failure path degrades to "no guidance" and logs a warning: a mistyped
  * skill name must never be able to reject a user's spoken request.
  */
-export declare function resolveHandoffGuidance(runtime: HandoffGuidanceRuntime, config: VoiceConfig, options: HandoffGuidanceContext): Promise<HandoffGuidance>;
+export declare function resolveHandoffGuidance(runtime: HandoffGuidanceRuntime, config: Pick<VoiceConfig, 'handoffSkill' | 'handoffInstructions'>, options: HandoffGuidanceContext): Promise<HandoffGuidance>;
 export {};

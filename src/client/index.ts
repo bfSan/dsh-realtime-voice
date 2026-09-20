@@ -23,6 +23,7 @@ import type { VoiceButtonInjected } from './VoiceButton.tsx'
 import { VoiceButton } from './VoiceButton.tsx'
 import type { VoiceOverlayInjected } from './VoiceOverlay.tsx'
 import { VoiceOverlay } from './VoiceOverlay.tsx'
+import { VoiceLauncher, type VoiceLauncherInjected } from './VoiceLauncher.tsx'
 import type { VoiceSettingsCardInjected } from './VoiceSettingsCard.tsx'
 import { VoiceSettingsCard } from './VoiceSettingsCard.tsx'
 
@@ -63,6 +64,18 @@ export function apply(ctx: Context): void {
       },
     }),
   }, VoiceButton))
+
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'realtime-voice-launcher',
+    order: 99,
+    inject: (): VoiceLauncherInjected => ({
+      hooks: { voice },
+      startSupervisor: () => voice.startSupervisor(),
+      selectTask: taskId => voice.selectTask(taskId),
+      createTask: (workspace, preset) => voice.createTask(workspace, preset),
+    }),
+  }, VoiceLauncher))
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',
@@ -113,6 +126,8 @@ export function apply(ctx: Context): void {
       setProgressQuietTask: (value: number) => { void modelSettings.setProgressQuietTask(value) },
       setHandoffSkill: (value: string) => { void modelSettings.setHandoffSkill(value) },
       setHandoffInstructions: (value: string) => { void modelSettings.setHandoffInstructions(value) },
+      setSupervisorSkill: (value: string) => { void modelSettings.setSupervisorSkill(value) },
+      setSupervisorInstructions: (value: string) => { void modelSettings.setSupervisorInstructions(value) },
       setRingDuration: (value: number) => { void modelSettings.setRingDuration(value) },
       saveApiKey: (value: string) => modelSettings.saveApiKey(value),
     }),

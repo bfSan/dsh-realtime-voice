@@ -31,6 +31,8 @@ export declare class DashScopeRealtime {
     private readonly queuedAnnouncements;
     private readonly announcedIds;
     private responseActive;
+    private pendingAnnouncementId;
+    private readonly cancellations;
     private responseRequested;
     private followupResponsePending;
     private inputSpeechActive;
@@ -53,6 +55,8 @@ export declare class DashScopeRealtime {
     private queueAnnouncement;
     close(): void;
     private handleEvent;
+    updateInstructions(instructions: string): void;
+    updateTools(tools: readonly RealtimeFunctionTool[]): void;
     private drainAgentAnnouncements;
     private requestResponse;
     private requestResponseAfterCurrent;

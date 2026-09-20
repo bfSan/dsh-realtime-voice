@@ -55,7 +55,7 @@ const cssPlugin: NonNullable<UserConfig['plugins']>[number] = {
 export default defineConfig([
   {
     name: PACKAGE_ID,
-    entry: { index: 'src/index.ts', protocol: 'src/protocol.ts', 'direct-protocol': 'src/direct-protocol.ts' },
+    entry: { index: 'src/index.ts', protocol: 'src/protocol.ts', 'direct-protocol': 'src/direct-protocol.ts', 'supervisor-protocol': 'src/supervisor-protocol.ts' },
     outDir: 'lib',
     format: 'esm',
     fixedExtension: false,

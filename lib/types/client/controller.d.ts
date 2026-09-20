@@ -2,6 +2,7 @@ import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import { type VoiceApproval, type VoiceInboxEntry, type VoicePhase, type VoiceQuestion, type VoiceQuestionAnswer, type VoiceOccupancyStatus } from '../protocol.ts';
 export type ClientVoicePhase = 'idle' | 'requesting-permission' | VoicePhase | 'error';
 export interface VoiceSnapshot {
+    supervisor?: boolean;
     phase: ClientVoicePhase;
     sessionId?: string;
     voiceSessionId?: string;
@@ -26,6 +27,14 @@ export interface VoiceSnapshot {
 }
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
 export declare class VoiceCallController implements HostObservable<VoiceSnapshot> {
+    private supervisorMode;
+    private readonly playbackFinalSequences;
+    private taskAction;
+    private sendTaskAction;
+    private settleTaskAction;
+    startSupervisor(): Promise<void>;
+    selectTask(taskId: string): Promise<void>;
+    createTask(workspace: string, presetId: string): Promise<void>;
     private snapshot;
     private readonly listeners;
     private socket;
@@ -46,6 +55,8 @@ export declare class VoiceCallController implements HostObservable<VoiceSnapshot
     private presenceRequestSeq;
     private lastServerSeq;
     private lastOutputStreamId;
+    private inboxRevision;
+    private answeringInbox;
     getSnapshot: () => VoiceSnapshot;
     subscribe: (listener: () => void) => (() => void);
     startPresence(): void;
@@ -68,9 +79,8 @@ export declare class VoiceCallController implements HostObservable<VoiceSnapshot
      */
     answerInbox(sessionId?: string): Promise<void>;
     /** Keep the task in the list but stop offering it as a call to take. */
-    dismissInbox(entryIds: readonly string[]): void;
-    private deleteInbox;
-    start(sessionId: string): Promise<void>;
+    dismissInbox(entryIds: readonly string[]): Promise<void>;
+    start(sessionId: string, supervisor?: boolean): Promise<void>;
     end(): Promise<void>;
     toggleMute(): void;
     cancelResponse(): void;

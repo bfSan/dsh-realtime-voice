@@ -29,6 +29,8 @@ export interface DirectVoiceContinuityState {
     backendBridge?: DshBackendBridge;
 }
 export interface VoiceContinuityState {
+    supervisorTaskId?: string;
+    supervisorCoordinators?: Map<string, DshVoiceCoordinatorState>;
     id: string;
     protocol: VoiceControlProtocol;
     sessionId: string;

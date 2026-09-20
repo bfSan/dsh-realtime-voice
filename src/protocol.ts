@@ -2,12 +2,12 @@
 
 export const VOICE_PROTOCOL = 'dsh.voice.v1' as const
 export const VOICE_DIRECT_PROTOCOL = 'dsh.voice.direct.v1' as const
-export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_PROTOCOL
+export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_PROTOCOL | 'dsh.voice.supervisor.v1'
 export const VOICE_PROTOCOL_VERSION = 1 as const
 export const VOICE_ROUTE = '/plugins/realtime-voice/v1' as const
 export const VOICE_STATUS_ROUTE = '/plugins/realtime-voice/v1/status' as const
 export const VOICE_INBOX_ROUTE = '/plugins/realtime-voice/v1/inbox' as const
-export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.18' as const
+export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.19' as const
 
 /**
  * One handoff the voice surface owes the user a conversation about.
@@ -40,11 +40,14 @@ export interface VoiceInboxEntry {
   /** Wall-clock duration of the delegated turn, used to skip trivial tasks. */
   durationMs: number
   delivered: boolean
+  snoozed?: boolean
+  requiresOriginalSession?: boolean
 }
 
 export interface VoiceInboxSnapshot {
   protocol: typeof VOICE_PROTOCOL
   entries: readonly VoiceInboxEntry[]
+  error?: string
 }
 
 export const INPUT_SAMPLE_RATE = 16_000 as const
@@ -138,8 +141,8 @@ export interface VoiceQuestion {
 
 export type VoiceClientControl = VoiceHello
   | { type: 'voice.end'; reason?: string }
-  | { type: 'voice.cancel-response' }
-  | { type: 'voice.playback-drained'; streamId: number }
+  | { type: 'voice.cancel-response'; source?: 'local-vad' | 'user' }
+  | { type: 'voice.playback-drained'; streamId: number; lastSequence?: number }
   | { type: 'voice.commit' }
   | { type: 'voice.inbox-deliver'; entryIds: string[] }
   | { type: 'voice.approval-answer'; approvalId: string; outcome: 'allowed-once' | 'rejected' }
@@ -148,7 +151,7 @@ export type VoiceClientControl = VoiceHello
 
 export interface VoiceReady {
   type: 'voice.ready'
-  protocol: typeof VOICE_PROTOCOL
+  protocol: typeof VOICE_PROTOCOL | 'dsh.voice.supervisor.v1'
   voiceSessionId: string
   serverSeq: number
   target: { sessionId: string; running: boolean }
@@ -190,6 +193,7 @@ export interface VoiceOccupancyStatus {
 }
 
 export type VoiceServerControl = VoiceReady
+  | { type: 'voice.task-selected'; serverSeq: number; sessionId: string; running: boolean }
   | { type: 'voice.busy'; serverSeq: number; occupancy: VoiceOccupancyStatus }
   | { type: 'voice.state'; serverSeq: number; phase: VoicePhase }
   | {
@@ -319,7 +323,9 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
   if (typeof value !== 'object' || value === null || !('type' in value)) return false
   const message = value as Record<string, unknown>
   if (message.type === 'voice.end') return message.reason === undefined || (typeof message.reason === 'string' && message.reason.length <= 128)
-  if (message.type === 'voice.cancel-response' || message.type === 'voice.commit') return true
+  if (message.type === 'voice.commit') return true
+  if (message.type === 'voice.cancel-response') return message.source === undefined
+    || message.source === 'local-vad' || message.source === 'user'
   if (message.type === 'voice.inbox-deliver') {
     return Array.isArray(message.entryIds)
       && message.entryIds.length > 0
@@ -330,6 +336,8 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
     return typeof message.streamId === 'number'
       && Number.isSafeInteger(message.streamId)
       && message.streamId >= 0
+      && (message.lastSequence === undefined || (typeof message.lastSequence === 'number'
+        && Number.isSafeInteger(message.lastSequence) && message.lastSequence >= 0))
   }
   if (message.type === 'voice.approval-answer') {
     return typeof message.approvalId === 'string'

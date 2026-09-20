@@ -843,7 +843,9 @@
 }
 
 .incomingLabel {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }
@@ -853,6 +855,8 @@
 .rowCheck {
   flex: none;
   width: 18px;
+  min-width: 18px;
+  max-width: 18px;
   height: 18px;
   display: grid;
   place-items: center;
@@ -901,6 +905,7 @@
 }
 
 .incomingTitle {
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--dsw-alias-text-primary, #0f172a);
@@ -940,6 +945,7 @@
 }
 
 .incomingActions {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1041,4 +1047,64 @@
     flex-direction: column;
     gap: 10px;
   }
+}
+.readConfirmation {
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+
+.readConfirmation p {
+  margin: 0 0 8px;
+}
+
+.readConfirmation button + button {
+  margin-left: 8px;
+}
+.launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1000;
+  color: var(--dsw-alias-text-primary, #e8e8ed);
+  font-size: 13px;
+}
+
+.launcherMenu {
+  position: absolute;
+  bottom: 44px;
+  right: 0;
+  width: min(360px, calc(100vw - 40px));
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--dsw-alias-surface-primary, #22232a);
+  border: 1px solid #737580;
+  box-shadow: 0 8px 32px #0005;
+}
+
+.launcherMenu label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.launcherMenu select, .launcherMenu input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.launcherTasks {
+  max-height: 180px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.launcherTasks button {
+  text-align: left;
+  overflow-wrap: anywhere;
 }

@@ -24,6 +24,8 @@ export interface VoiceInboxEntry {
     durationMs: number;
     /** True once the voice surface has spoken this report. */
     delivered: boolean;
+    snoozed?: boolean;
+    requiresOriginalSession?: boolean;
 }
 export interface WatchHandoffInput {
     handoffId: string;
@@ -91,6 +93,13 @@ export declare class VoiceInbox {
     /** Handoffs the live call already spoke, seen before or after their entry. */
     private readonly spokenHandoffs;
     private titleLookup;
+    private onChange;
+    private readonly completedTurns;
+    storageError: string | undefined;
+    setOnChange(listener: (() => void) | undefined): void;
+    restore(entries: VoiceInboxEntry[]): void;
+    snooze(ids: readonly string[]): void;
+    private trim;
     watch(input: WatchHandoffInput): void;
     /**
      * Whether this session currently holds a handoff the voice surface started.

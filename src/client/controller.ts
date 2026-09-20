@@ -25,6 +25,7 @@ import { BrowserAudioEngine } from './audio-engine.ts'
 export type ClientVoicePhase = 'idle' | 'requesting-permission' | VoicePhase | 'error'
 
 export interface VoiceSnapshot {
+  supervisor?: boolean
   phase: ClientVoicePhase
   sessionId?: string
   voiceSessionId?: string
@@ -62,6 +63,45 @@ const INITIAL_SNAPSHOT: VoiceSnapshot = {
 
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
 export class VoiceCallController implements HostObservable<VoiceSnapshot> {
+  private supervisorMode = false
+  private readonly playbackFinalSequences = new Map<number, number>()
+  private taskAction: { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | undefined
+
+  private sendTaskAction(message: object): Promise<void> {
+    if (this.taskAction) return Promise.reject(new Error('正在选择任务，请稍候'))
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.taskAction = undefined
+        reject(new Error('选择任务超时，请检查连接后重试'))
+      }, 15_000)
+      this.taskAction = { resolve, reject, timer }
+      this.socket?.send(JSON.stringify(message))
+    })
+  }
+
+  private settleTaskAction(error?: string): void {
+    const action = this.taskAction
+    if (!action) return
+    this.taskAction = undefined
+    clearTimeout(action.timer)
+    if (error) action.reject(new Error(error))
+    else action.resolve()
+  }
+
+  async startSupervisor(): Promise<void> {
+    if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'error') return
+    await this.start('voice-supervisor', true)
+  }
+
+  async selectTask(taskId: string): Promise<void> {
+    if (!this.supervisorMode || !this.providerReady) throw new Error('请先接通总管电话')
+    await this.sendTaskAction({ type: 'voice.select-task', taskId })
+  }
+
+  async createTask(workspace: string, presetId: string): Promise<void> {
+    if (!this.supervisorMode || !this.providerReady) throw new Error('请先接通总管电话')
+    await this.sendTaskAction({ type: 'voice.create-task', workspace, presetId, requestId: crypto.randomUUID() })
+  }
   private snapshot: VoiceSnapshot = INITIAL_SNAPSHOT
   private readonly listeners = new Set<() => void>()
   private socket: WebSocket | undefined
@@ -82,6 +122,8 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   private presenceRequestSeq = 0
   private lastServerSeq = 0
   private lastOutputStreamId = 0
+  private inboxRevision = 0
+  private answeringInbox = false
 
   getSnapshot = (): VoiceSnapshot => this.snapshot
 
@@ -133,20 +175,31 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         ? this.snapshot.snoozedInbox
         : [...this.snapshot.snoozedInbox, entryId],
     })
+    void fetch(`${VOICE_INBOX_ROUTE}?id=${encodeURIComponent(entryId)}`, { method: 'PATCH' })
+      .then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`) })
+      .catch(() => this.update({ ...this.snapshot, error: '稍后状态仅在当前窗口生效，保存失败。' }))
   }
 
   /** Take one report immediately, ignoring whatever else is selected. */
   async answerInboxOne(entryId: string): Promise<void> {
+    if (this.answeringInbox) return
     const entry = this.snapshot.inbox.find(candidate => candidate.id === entryId)
     if (entry === undefined) return
-    await this.start(entry.sessionId)
-    if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
-      this.sendControl({ type: 'voice.inbox-deliver', entryIds: [entryId] })
-      this.update({
-        ...this.snapshot,
-        inboxSelection: this.snapshot.inboxSelection.filter(id => id !== entryId),
-      })
+    if (entry.requiresOriginalSession === true) {
+      this.update({ ...this.snapshot, error: '此问题来自上次运行，请在原 DSH 任务中继续回答。' })
+      return
     }
+    this.answeringInbox = true
+    try {
+      await this.start(entry.sessionId)
+      if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
+        this.sendControl({ type: 'voice.inbox-deliver', entryIds: [entryId] })
+        this.update({
+          ...this.snapshot,
+          inboxSelection: this.snapshot.inboxSelection.filter(id => id !== entryId),
+        })
+      }
+    } finally { this.answeringInbox = false }
   }
 
   /**
@@ -154,43 +207,52 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
    * ask the Host to speak those results in selection order.
    */
   async answerInbox(sessionId?: string): Promise<void> {
+    if (this.answeringInbox) return
     const selected = this.snapshot.inboxSelection.length > 0
       ? this.snapshot.inboxSelection
       : this.snapshot.inbox.filter(entry => !entry.delivered).slice(0, 1).map(entry => entry.id)
     if (selected.length === 0) return
+    if (this.snapshot.inbox.some(entry => selected.includes(entry.id) && entry.requiresOriginalSession)) {
+      this.update({ ...this.snapshot, error: '所选问题来自上次运行，请在原 DSH 任务中继续回答。' })
+      return
+    }
     const target = sessionId
       ?? this.snapshot.inbox.find(entry => entry.id === selected[0])?.sessionId
     if (target === undefined) return
-    await this.start(target)
-    if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
-      this.sendControl({ type: 'voice.inbox-deliver', entryIds: [...selected] })
-      this.update({ ...this.snapshot, inboxSelection: [] })
-    }
+    this.answeringInbox = true
+    try {
+      await this.start(target)
+      if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
+        this.sendControl({ type: 'voice.inbox-deliver', entryIds: [...selected] })
+        this.update({ ...this.snapshot, inboxSelection: [] })
+      }
+    } finally { this.answeringInbox = false }
   }
 
   /** Keep the task in the list but stop offering it as a call to take. */
-  dismissInbox(entryIds: readonly string[]): void {
+  async dismissInbox(entryIds: readonly string[]): Promise<void> {
     if (entryIds.length === 0) return
-    void this.deleteInbox(entryIds)
+    this.inboxRevision += 1
+    try {
+      const query = entryIds.map(id => `id=${encodeURIComponent(id)}`).join('&')
+      const response = await fetch(`${VOICE_INBOX_ROUTE}?${query}`, { method: 'DELETE' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      this.inboxRevision += 1
       this.update({
         ...this.snapshot,
+        error: undefined,
         inbox: this.snapshot.inbox.filter(entry => !entryIds.includes(entry.id)),
         inboxSelection: this.snapshot.inboxSelection.filter(id => !entryIds.includes(id)),
         snoozedInbox: this.snapshot.snoozedInbox.filter(id => !entryIds.includes(id)),
       })
-  }
-
-  private async deleteInbox(entryIds: readonly string[]): Promise<void> {
-    try {
-      const query = entryIds.map(id => `id=${encodeURIComponent(id)}`).join('&')
-      await fetch(`${VOICE_INBOX_ROUTE}?${query}`, { method: 'DELETE' })
-    } catch {
-      // The next poll restores anything the Host still holds.
+    } catch (error) {
+      this.update({ ...this.snapshot, error: `标记已读失败，条目已保留：${String(error)}` })
     }
   }
 
-  async start(sessionId: string): Promise<void> {
+  async start(sessionId: string, supervisor = false): Promise<void> {
     if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'error') return
+    this.supervisorMode = supervisor
     const resumeContext = localResumeContext(this.snapshot)
     const targetSessionId = resumeContext?.sessionId ?? sessionId
     if (!window.isSecureContext || navigator.mediaDevices?.getUserMedia === undefined) {
@@ -231,7 +293,10 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
       const audio = new BrowserAudioEngine(
         pcm => this.sendAudio(pcm),
         () => this.handleLocalSpeechStart(),
-        streamId => this.sendControl({ type: 'voice.playback-drained', streamId }),
+        streamId => {
+          const lastSequence = this.playbackFinalSequences.get(streamId)
+          this.sendControl({ type: 'voice.playback-drained', streamId, ...(lastSequence === undefined ? {} : { lastSequence }) })
+        },
       )
       this.audio = audio
       await audio.start()
@@ -252,6 +317,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   async end(): Promise<void> {
     if (this.snapshot.phase === 'idle') return
     this.ending = true
+    this.settleTaskAction('通话已结束')
     this.update({ ...this.snapshot, phase: 'ending' })
     this.sendControl({ type: 'voice.end', reason: 'user-ended' })
     await this.cleanup()
@@ -267,7 +333,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
 
   cancelResponse(): void {
     this.audio?.interruptPlayback()
-    this.sendControl({ type: 'voice.cancel-response' })
+    this.sendControl({ type: 'voice.cancel-response', source: 'user' })
   }
 
   answerApproval(approvalId: string, outcome: 'allowed-once' | 'rejected'): void {
@@ -282,6 +348,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
 
   async dispose(): Promise<void> {
     this.ending = true
+    this.settleTaskAction('语音组件已关闭')
     if (this.presenceTimer !== undefined) clearInterval(this.presenceTimer)
     this.presenceTimer = undefined
     await this.cleanup()
@@ -322,7 +389,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         if (this.socket !== socket || epoch !== this.connectionEpoch) return
         socket.send(JSON.stringify({
           type: 'voice.hello',
-          protocol: VOICE_PROTOCOL,
+          protocol: this.supervisorMode ? 'dsh.voice.supervisor.v1' : VOICE_PROTOCOL,
           requestId: crypto.randomUUID(),
           client: {
             platform: 'web',
@@ -334,7 +401,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
             duplex: 'full',
             playbackDrainAck: true,
           },
-          target: { sessionId },
+          ...(this.supervisorMode ? {} : { target: { sessionId } }),
           audio: {
             input: { encoding: 'pcm_s16le', sampleRate: INPUT_SAMPLE_RATE, channels: AUDIO_CHANNELS, frameDurationMs: 40 },
             output: { encoding: 'pcm_s16le', sampleRate: OUTPUT_SAMPLE_RATE, channels: AUDIO_CHANNELS, frameDurationMs: 40 },
@@ -426,6 +493,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         this.update({
           ...this.snapshot,
           phase: 'listening',
+          supervisor: message.protocol === 'dsh.voice.supervisor.v1',
           sessionId: message.target.sessionId,
           voiceSessionId: message.voiceSessionId,
           providerModel: message.provider.model,
@@ -459,19 +527,28 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         }
         return
       case 'voice.playback-clear':
+        this.playbackFinalSequences.clear()
         this.lastOutputStreamId = Math.max(this.lastOutputStreamId, message.streamId)
         this.audio?.clear(message.streamId)
         return
       case 'voice.playback-finalize':
+        this.playbackFinalSequences.set(message.streamId, message.lastSequence)
         this.audio?.finalize(message.streamId)
         return
       case 'voice.agent-status':
         this.update({
           ...this.snapshot,
           agentRunning: message.running,
+          ...(this.supervisorMode ? { sessionId: message.sessionId } : {}),
           ...(message.summary === undefined ? {} : { agentSummary: message.summary }),
         })
         return
+      case 'voice.task-selected': {
+        this.settleTaskAction()
+        const { pendingApproval: _approval, pendingQuestion: _question, ...snapshot } = this.snapshot
+        this.update({ ...snapshot, sessionId: message.sessionId, agentRunning: message.running, error: undefined })
+        return
+      }
       case 'voice.approval':
         if (message.status === 'pending') {
           this.update({ ...this.snapshot, pendingApproval: message.approval })
@@ -489,6 +566,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         }
         return
       case 'voice.error':
+        this.settleTaskAction(message.message)
         if (message.recoverable) {
           this.lastReconnectError = message.message
           this.update({ ...this.snapshot, error: message.message })
@@ -565,7 +643,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
       || this.snapshot.muted
       || this.snapshot.turnDetection !== 'server_vad') return
     this.audio?.interruptPlayback()
-    this.sendControl({ type: 'voice.cancel-response' })
+    this.sendControl({ type: 'voice.cancel-response', source: 'local-vad' })
     this.update({ ...this.snapshot, phase: 'listening' })
   }
 
@@ -628,17 +706,23 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
    * rides that cadence instead of opening a second timer.
    */
   private async refreshInbox(): Promise<void> {
+    const revision = this.inboxRevision
     try {
       const response = await fetch(VOICE_INBOX_ROUTE, { cache: 'no-store' })
       if (!response.ok) return
       const snapshot = await response.json() as VoiceInboxSnapshot
+      if (revision !== this.inboxRevision) return
       if (snapshot.protocol !== VOICE_PROTOCOL || !Array.isArray(snapshot.entries)) return
       const live = new Set(snapshot.entries.map(entry => entry.id))
       this.update({
         ...this.snapshot,
         inbox: snapshot.entries,
         inboxSelection: this.snapshot.inboxSelection.filter(id => live.has(id)),
-        snoozedInbox: this.snapshot.snoozedInbox.filter(id => live.has(id)),
+        snoozedInbox: [...new Set([
+          ...this.snapshot.snoozedInbox.filter(id => live.has(id)),
+          ...snapshot.entries.filter(entry => entry.snoozed).map(entry => entry.id),
+        ])],
+        ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
       })
     } catch {
       return

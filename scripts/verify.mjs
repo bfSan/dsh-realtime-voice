@@ -5,6 +5,7 @@ const required = [
   'lib/client.js',
   'lib/protocol.js',
   'lib/direct-protocol.js',
+  'lib/supervisor-protocol.js',
   'lib/types/index.d.ts',
   'lib/types/client/index.d.ts',
   'lib/types/direct-protocol.d.ts',

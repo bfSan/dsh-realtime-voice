@@ -1,6 +1,6 @@
 {
   "name": "@harness-remote/dsh-realtime-voice",
-  "version": "0.1.0-alpha.18",
+  "version": "0.1.0-alpha.19",
   "description": "Hot-disposable realtime voice Agent plugin for DeepSeek Harness WebUI and future WeChat Mini Program clients",
   "keywords": [
     "deepseek-harness",
@@ -37,6 +37,10 @@
       "types": "./lib/types/direct-protocol.d.ts",
       "default": "./lib/direct-protocol.js"
     },
+    "./supervisor-protocol": {
+      "types": "./lib/types/supervisor-protocol.d.ts",
+      "default": "./lib/supervisor-protocol.js"
+    },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -67,6 +71,7 @@
     "lib/client.js",
     "lib/protocol.js",
     "lib/direct-protocol.js",
+    "lib/supervisor-protocol.js",
     "lib/*.js.map",
     "lib/types/**/*.d.ts",
     "scripts/*.mjs",

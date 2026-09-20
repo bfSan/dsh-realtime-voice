@@ -149,6 +149,11 @@ describe('call-back list interactions', () => {
     act(() => {
       read!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
+    expect(view.handlers.dismissInbox).not.toHaveBeenCalled()
+    expect(view.container.querySelector('[role="alertdialog"]')).not.toBeNull()
+    act(() => {
+      view.findByText('确认已读')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     expect(view.handlers.dismissInbox).toHaveBeenCalledWith(['inbox-1'])
 
     const later = view.findByText('稍后')

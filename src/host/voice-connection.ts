@@ -27,6 +27,7 @@ import {
 } from './dashscope-realtime.ts'
 import {
   DshVoiceCoordinator,
+  createDshVoiceCoordinatorState,
   type PendingVoiceApproval,
   type PendingVoiceQuestion,
   type VoiceQuestionAnswer,
@@ -37,14 +38,21 @@ import { ResponsePcmPacketizer } from './pcm-packetizer.ts'
 import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts'
 import { DshFunctionBridge } from './dsh-function-bridge.ts'
 import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.ts'
+import { ReportDelivery } from './report-delivery.ts'
+import { createVoiceDiagnostics, type VoiceDiagnosticEvent } from './voice-diagnostics.ts'
 import { ProgressAnnouncementGate } from './progress-gate.ts'
 import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
 import { resolveHandoffGuidance, type HandoffGuidanceRuntime } from './handoff-guidance.ts'
 import type { VoiceInbox, VoiceInboxEntry } from './voice-inbox.ts'
+import { isSupervisorHello, parseSupervisorArguments, SUPERVISOR_TOOLS, SUPERVISOR_TOOL_NAMES, VOICE_SUPERVISOR_PROTOCOL } from '../supervisor-protocol.ts'
+import type { VoiceTaskDirectory } from './voice-task-directory.ts'
+import { VoiceSupervisor } from './voice-supervisor.ts'
+import { resolveSupervisorGuidance } from './supervisor-guidance.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
 const BROWSER_AUDIO_SEND_TIMEOUT_MS = 15_000
+const SUPERVISOR_LEASE_TARGET = 'voice-supervisor'
 
 /**
  * DSH repeats the final answer on the `turn/end` that follows its
@@ -64,6 +72,10 @@ interface VoiceAnnouncementEntry {
 
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export class VoiceConnection {
+  private supervisorMode = false
+  private supervisor: VoiceSupervisor | undefined
+  private userTurnSequence = 0
+  private reportReadOnly = false
   private readonly provisionalId = randomUUID()
   private continuity: VoiceContinuityState | undefined
   private serverSeq = 0
@@ -105,6 +117,31 @@ export class VoiceConnection {
   private helloTimer: ReturnType<typeof setTimeout>
   private hostEventsAbort: AbortController | undefined
   private readonly pendingAssistantByTurn = new Map<string, string>()
+  private readonly reportDelivery = new ReportDelivery()
+  private readonly reportAttempts = new Map<string, string[]>()
+  private readonly responseAttempts = new Map<string, string>()
+  private readonly streamAttempts = new Map<number, Set<string>>()
+  private readonly attemptFinalSequences = new Map<string, number>()
+  private readonly reportHandoffs = new Map<string, string[]>()
+
+  private trace(kind: VoiceDiagnosticEvent['kind'], ids: Partial<VoiceDiagnosticEvent> = {}): void {
+    if (process.env.DSH_VOICE_DIAGNOSTICS !== '1') return
+    createVoiceDiagnostics(line => this.ctx.logger.info(`[voice-lifecycle] ${line}`))({
+      ...ids, callId: this.id, at: Date.now(), kind,
+    })
+  }
+
+  private confirmReport(attemptId: string): void {
+    const ids = this.reportAttempts.get(attemptId)
+    if (ids === undefined) return
+    const completed = ids.filter(id => this.reportDelivery.state(id) === 'completed')
+    this.inbox?.markDelivered(completed)
+    for (const id of completed) {
+      for (const handoff of this.reportHandoffs.get(id) ?? []) this.inbox?.markHandoffDelivered(handoff)
+      this.reportHandoffs.delete(id)
+    }
+    if (completed.length === ids.length) this.reportAttempts.delete(attemptId)
+  }
   private readonly progressGate: ProgressAnnouncementGate
   private readonly progressCoalescer: ProgressAnnouncementCoalescer<VoiceAnnouncementEntry>
 
@@ -117,6 +154,7 @@ export class VoiceConnection {
     private readonly runtime: VoiceRuntime = new VoiceRuntime(),
     private readonly inbox: VoiceInbox | undefined = undefined,
     private readonly guidanceRuntime: HandoffGuidanceRuntime = {},
+    private readonly directory?: VoiceTaskDirectory,
   ) {
     this.progressGate = new ProgressAnnouncementGate({
       mode: config.progressReporting,
@@ -214,6 +252,32 @@ export class VoiceConnection {
       return
     }
     const parsed: unknown = JSON.parse(raw.toString())
+    if (isSupervisorHello(parsed)) {
+      if (this.hello !== undefined) throw new Error('voice.hello may only be sent once')
+      if (!this.directory) throw new Error('语音总管目录不可用')
+      this.supervisorMode = true
+      await this.start({ ...parsed, protocol: VOICE_PROTOCOL, target: { sessionId: SUPERVISOR_LEASE_TARGET } })
+      if (parsed.target) await this.supervisor?.select(parsed.target.sessionId)
+      return
+    }
+    if (this.supervisorMode && typeof parsed === 'object' && parsed !== null) {
+      const control = parsed as Record<string, unknown>
+      if (control.type === 'voice.select-task') {
+        if (typeof control.taskId !== 'string') throw new Error('请选择有效任务')
+        await this.supervisor?.select(control.taskId)
+        return
+      }
+      if (control.type === 'voice.create-task') {
+        if (typeof control.workspace !== 'string' || typeof control.presetId !== 'string'
+          || typeof control.requestId !== 'string') throw new Error('请选择项目和 Agent')
+        const created = await this.directory!.createTask({
+          workspace: control.workspace, presetId: control.presetId,
+          requestId: `${this.id}:ui:${control.requestId}`,
+        })
+        await this.supervisor?.select(created.taskId)
+        return
+      }
+    }
     if (!isVoiceClientControl(parsed)) throw new Error('unknown voice control message')
     switch (parsed.type) {
       case 'voice.hello':
@@ -225,9 +289,23 @@ export class VoiceConnection {
         this.dispose('client-ended')
         return
       case 'voice.cancel-response':
-        this.interruptActiveResponse('cancelled', true)
+        this.interruptActiveResponse('cancelled', true, parsed.source ?? 'user')
         return
       case 'voice.playback-drained':
+        {
+          const attempts = this.streamAttempts.get(parsed.streamId)
+          for (const attempt of attempts ?? []) {
+            const finalSequence = this.attemptFinalSequences.get(attempt)
+            if (this.hello?.client.playbackDrainAck !== true || finalSequence === undefined
+              || parsed.lastSequence === undefined || parsed.lastSequence < finalSequence) continue
+            this.trace('drained', { requestId: attempt })
+            for (const id of this.reportAttempts.get(attempt) ?? []) this.reportDelivery.playbackDrained(`${attempt}:${id}`)
+            this.confirmReport(attempt)
+            attempts?.delete(attempt)
+            this.attemptFinalSequences.delete(attempt)
+          }
+          if (attempts?.size === 0) this.streamAttempts.delete(parsed.streamId)
+        }
         if (this.hello?.client.playbackDrainAck === true && parsed.streamId === this.gatedOutputStreamId) {
           this.releasePlaybackGate()
         }
@@ -261,6 +339,10 @@ export class VoiceConnection {
    * would silently drop the tail of a long selection.
    */
   private deliverInboxEntries(entryIds: readonly string[]): void {
+    this.trace('accept')
+    this.reportReadOnly = true
+    this.supervisor?.reportMode()
+    this.provider?.updateTools(this.callTools(true))
     const inbox = this.inbox
     if (inbox === undefined) return
     const selected = inbox.list().filter(entry => entryIds.includes(entry.id))
@@ -269,7 +351,6 @@ export class VoiceConnection {
     // actually answered, because marking it delivered would hide a card the
     // Agent is still blocked on.
     const reports = selected.filter(entry => entry.kind !== 'needs-input')
-    if (reports.length > 0) inbox.markDelivered(reports.map(entry => entry.id))
     const pending = selected.filter(entry => entry.kind === 'needs-input')
     if (pending.length > 0) {
       this.deliverPendingInteractions(pending)
@@ -289,8 +370,12 @@ export class VoiceConnection {
       return `${index + 1}. [${tag}]${title}：${entry.summary.slice(0, perEntryBudget)}`
     }).join('\n')
     const single = ordered.length === 1
+    const attemptId = `inbox_${randomUUID()}`
+    this.reportAttempts.set(attemptId, ordered.map(entry => entry.id))
+    for (const entry of ordered) this.reportDelivery.begin(entry.id, `${attemptId}:${entry.id}`)
+    this.trace('inject', { requestId: attemptId, ...(ordered[0] ? { reportId: ordered[0].id } : {}) })
     this.progressCoalescer.settle({
-      id: `inbox_${ordered.map(entry => entry.id).join('_')}`,
+      id: attemptId,
       text: `[COMPLETE] 用户挂断后完成的任务结果，共 ${ordered.length} 条：\n${summary}\n${
         single
           ? '这是用户刚从回拨列表里选中的任务。请用一两句话汇报结论，不要重复提交这个任务。'
@@ -300,7 +385,7 @@ export class VoiceConnection {
       kind: 'complete',
       // Each call-back is its own reporting event; two selections may carry
       // identical text without being the same announcement.
-      group: `inbox_${ordered.map(entry => entry.id).join('_')}`,
+      group: attemptId,
     })
   }
 
@@ -349,6 +434,7 @@ export class VoiceConnection {
       platform: hello.client.platform,
       clientVersion: hello.client.version,
       sessionId: hello.target.sessionId,
+      ...(this.supervisorMode ? { protocol: VOICE_SUPERVISOR_PROTOCOL } : {}),
       ...(hello.resume === undefined ? {} : { resumeId: hello.resume.voiceSessionId }),
       revoke: () => this.dispose('voice-resumed-elsewhere'),
     })
@@ -371,15 +457,84 @@ export class VoiceConnection {
     this.outputStreamId = lease.state.outputStreamId
     this.outputSeq = lease.state.outputSequence
     this.outputPtsMs = lease.state.outputPtsMs
-    this.session = new DshVoiceSession(this.ctx, hello.target.sessionId)
-    const status = await this.session.snapshot()
+    if (this.supervisorMode) {
+      this.supervisor = new VoiceSupervisor(this.id, this.directory!, {
+        select: taskId => this.bindSupervisorTask(taskId),
+        submit: async (instruction, spokenInput) => {
+          if (!this.functionBridge) throw new Error('请先选择任务')
+          const result = await this.functionBridge.execute(
+            `supervisor_${this.userTurnSequence}`, 'handoff_to_dsh_agent',
+            JSON.stringify({ instruction }), spokenInput, this.providerFunctionScope,
+          )
+          return result.output
+        },
+        cancel: async () => this.coordinator?.cancel(),
+      })
+      if (this.continuity.supervisorTaskId) await this.supervisor.select(this.continuity.supervisorTaskId)
+    }
+    const status: { running: boolean; blank: boolean; cwd?: string; title?: string; summary?: string } = this.supervisorMode
+      ? this.session ? await this.session.snapshot() : { running: false, blank: true }
+      : await this.bindTask(hello.target.sessionId)
+    const credential = await this.ctx.credentials.resolve(credentialRef(this.config.apiKeyEnv))
+    if (credential === undefined) {
+      this.fail('credential-missing', `未检测到 ${this.config.apiKeyEnv}。请在插件设置中保存百炼 API Key。`, false)
+      return
+    }
+    const guidance = await resolveSupervisorGuidance({
+      skill: this.config.supervisorSkill, instructions: this.config.supervisorInstructions,
+      ...(status.cwd === undefined ? {} : { cwd: status.cwd }),
+    }, this.guidanceRuntime)
+    const instructions = this.supervisorMode ? `${guidance.body}\n当前选择：${this.supervisor?.selectedTask ?? '尚未选择任务'}。\n${this.config.stylePrompt}`
+      : buildVoiceInstructions(status, this.continuity, { stylePrompt: this.config.stylePrompt, taskDirectory: this.directory !== undefined })
+    const tools = this.callTools(false)
+    const provider = new DashScopeRealtime(this.config, credential.value, instructions, tools, {
+      onEvent: event => this.onProviderEvent(event),
+    })
+    this.provider = provider
+    await provider.connect()
+    if (this.closed) return
+    this.ready = true
+    this.trace('ready')
+    this.send({
+      type: 'voice.ready',
+      protocol: this.supervisorMode ? VOICE_SUPERVISOR_PROTOCOL : VOICE_PROTOCOL,
+      voiceSessionId: this.id,
+      serverSeq: this.nextSeq(),
+      target: { sessionId: this.supervisor?.selectedTask ?? hello.target.sessionId, running: status.running || this.coordinator?.active === true },
+      provider: {
+        id: 'dashscope', model: this.config.model, voice: this.config.voice, turnDetection: this.config.turnDetection,
+      },
+      audio: { ...negotiateVoiceAudio(hello, this.config.maxBinaryFrameBytes) },
+      capabilities: negotiateVoiceCapabilities(hello),
+    })
+    if (guidance.error) this.fail('supervisor-guidance', guidance.error, true)
+    this.sendState('listening')
+    if (this.continuity.pendingApproval !== undefined) this.sendApproval(this.continuity.pendingApproval, 'pending')
+    if (this.continuity.pendingQuestion !== undefined) this.sendQuestion(this.continuity.pendingQuestion, 'pending')
+    if (!this.supervisorMode) {
+      this.followDshEvents(hello.target.sessionId)
+      await this.reconcileDshHistory(hello.target.sessionId)
+    }
+  }
+
+  private async bindTask(sessionId: string) {
+    const session = new DshVoiceSession(this.ctx, sessionId)
+    const status = await session.snapshot()
+    if (this.supervisorMode) this.hostEventsAbort?.abort()
+    this.session = session
     this.dshTurnRunning = status.running
-    const coordinator = new DshVoiceCoordinator(this.ctx, hello.target.sessionId, this.continuity.coordinator)
+    let coordinatorState = this.continuity?.coordinator
+    if (this.supervisorMode && this.continuity) {
+      const states = this.continuity.supervisorCoordinators ??= new Map()
+      coordinatorState = states.get(sessionId) ?? createDshVoiceCoordinatorState()
+      states.set(sessionId, coordinatorState)
+    }
+    const coordinator = new DshVoiceCoordinator(this.ctx, sessionId, coordinatorState)
     this.coordinator = coordinator
-    this.functionBridge = new DshFunctionBridge(coordinator, this.continuity.functionReceipts, {
+    this.functionBridge = new DshFunctionBridge(coordinator, this.continuity?.functionReceipts, {
       onApprovalResolved: (approval, outcome) => this.afterApprovalResolved(approval, outcome),
       onQuestionResolved: question => this.afterQuestionResolved(question),
-    }, this.continuity.interactionReceipts, {
+    }, this.continuity?.interactionReceipts, {
       resolveGuidance: async () => await resolveHandoffGuidance(
         this.guidanceRuntime,
         this.config,
@@ -392,47 +547,30 @@ export class VoiceConnection {
         ...(status.title === undefined ? {} : { sessionTitle: status.title }),
       }),
     })
-    const credential = await this.ctx.credentials.resolve(credentialRef(this.config.apiKeyEnv))
-    if (credential === undefined) {
-      this.fail(
-        'credential-missing',
-        `未检测到 ${this.config.apiKeyEnv}。请打开“设置 → 插件 → DSH 实时语音”安全保存百炼 API Key，或在本机环境中配置同名变量。`,
-        false,
-      )
-      return
-    }
-    const instructions = buildVoiceInstructions(status, this.continuity, {
-      stylePrompt: this.config.stylePrompt,
-    })
-    const provider = new DashScopeRealtime(this.config, credential.value, instructions, VOICE_FUNCTION_TOOLS, {
-      onEvent: event => this.onProviderEvent(event),
-    })
-    this.provider = provider
-    await provider.connect()
-    if (this.closed) return
-    this.ready = true
-    this.send({
-      type: 'voice.ready',
-      protocol: VOICE_PROTOCOL,
-      voiceSessionId: this.id,
-      serverSeq: this.nextSeq(),
-      target: { sessionId: hello.target.sessionId, running: status.running || coordinator.active },
-      provider: {
-        id: 'dashscope',
-        model: this.config.model,
-        voice: this.config.voice,
-        turnDetection: this.config.turnDetection,
-      },
-      audio: {
-        ...negotiateVoiceAudio(hello, this.config.maxBinaryFrameBytes),
-      },
-      capabilities: negotiateVoiceCapabilities(hello),
-    })
-    this.sendState('listening')
-    if (this.continuity.pendingApproval !== undefined) this.sendApproval(this.continuity.pendingApproval, 'pending')
-    if (this.continuity.pendingQuestion !== undefined) this.sendQuestion(this.continuity.pendingQuestion, 'pending')
-    this.followDshEvents(hello.target.sessionId)
-    await this.reconcileDshHistory(hello.target.sessionId)
+    return status
+  }
+
+  private callTools(readOnly: boolean) {
+    const queries = SUPERVISOR_TOOLS.filter(tool => ['list_voice_tasks', 'read_voice_task_result'].includes(tool.function.name))
+    const answers = VOICE_FUNCTION_TOOLS.filter(tool => tool.function.name.startsWith('answer_'))
+    if (readOnly) return [...queries, ...answers]
+    return this.supervisorMode ? [...SUPERVISOR_TOOLS, ...answers]
+      : [...VOICE_FUNCTION_TOOLS, ...(this.directory ? queries : [])]
+  }
+
+  private async bindSupervisorTask(taskId: string): Promise<void> {
+    const status = await this.bindTask(taskId)
+    this.activeDshJobs = 0
+    this.refreshAgentWorkPending()
+    if (this.continuity) this.continuity.supervisorTaskId = taskId
+    this.followDshEvents(taskId)
+    const guidance = await resolveSupervisorGuidance({
+      skill: this.config.supervisorSkill, instructions: this.config.supervisorInstructions,
+      ...(status.cwd === undefined ? {} : { cwd: status.cwd }),
+    }, this.guidanceRuntime)
+    this.provider?.updateInstructions(`${guidance.body}\n当前明确选择的任务：${taskId}。${this.config.stylePrompt}`)
+    this.send({ type: 'voice.task-selected', serverSeq: this.nextSeq(), sessionId: taskId, running: status.running })
+    if (guidance.error) this.fail('supervisor-guidance', guidance.error, true)
   }
 
   private onProviderEvent(event: DashScopeServerEvent): void {
@@ -455,6 +593,10 @@ export class VoiceConnection {
       case 'conversation.item.input_audio_transcription.completed': {
         const transcript = field(event, 'transcript')
         this.latestUserTranscript = transcript.trim()
+        if (this.reportReadOnly) this.provider?.updateTools(this.callTools(false))
+        this.reportReadOnly = false
+        this.userTurnSequence += 1
+        this.supervisor?.userTurn(optionalField(event, 'item_id') ?? `u${this.userTurnSequence}`, transcript)
         if (this.continuity !== undefined) {
           this.continuity.userTranscript = transcript.trim()
           this.runtime.touch(this.continuity)
@@ -465,6 +607,12 @@ export class VoiceConnection {
       case 'response.created': {
         const response = event.response as Record<string, unknown> | undefined
         this.activeResponseId = typeof response?.id === 'string' ? response.id : undefined
+        if (typeof event.announcementId === 'string' && this.activeResponseId !== undefined) {
+          const attempt = event.announcementId
+          this.responseAttempts.set(this.activeResponseId, attempt)
+          for (const id of this.reportAttempts.get(attempt) ?? []) this.reportDelivery.attachResponse(`${attempt}:${id}`, this.activeResponseId)
+        }
+        this.trace('response-start', this.activeResponseId === undefined ? {} : { responseId: this.activeResponseId })
         this.sendState('thinking')
         return
       }
@@ -520,6 +668,18 @@ export class VoiceConnection {
         const response = event.response as Record<string, unknown> | undefined
         const responseId = typeof response?.id === 'string' ? response.id : this.activeResponseId
         const suppressed = responseId !== undefined && this.suppressedResponses.has(responseId)
+        if (responseId !== undefined) {
+          this.trace('response-end', { responseId })
+          const attempt = this.responseAttempts.get(responseId)
+          if (attempt !== undefined) {
+            const successful = !suppressed && (response?.status === undefined || response.status === 'completed')
+            for (const id of this.reportAttempts.get(attempt) ?? []) {
+              if (successful) this.reportDelivery.responseEnded(`${attempt}:${id}`)
+              else this.reportDelivery.interrupt(`${attempt}:${id}`)
+            }
+            this.confirmReport(attempt)
+          }
+        }
         if (!suppressed && responseId !== undefined) {
           const tail = this.outputPacketizer.flush(responseId)
           if (tail !== undefined) {
@@ -527,6 +687,8 @@ export class VoiceConnection {
           }
           const streamId = this.responseStreams.get(responseId)
           const lastSequence = this.responseLastSequences.get(responseId)
+          const attempt = this.responseAttempts.get(responseId)
+          if (attempt !== undefined && lastSequence !== undefined) this.attemptFinalSequences.set(attempt, lastSequence)
           if (streamId !== undefined && lastSequence !== undefined) {
             const generation = this.browserAudioGeneration
             const durationMs = this.responseAudioDurationMs.get(responseId) ?? 0
@@ -550,6 +712,7 @@ export class VoiceConnection {
         } else if (responseId !== undefined) {
           this.outputPacketizer.discard(responseId)
         }
+        if (responseId !== undefined) this.responseAttempts.delete(responseId)
         if (responseId !== undefined) this.suppressedResponses.delete(responseId)
         if (responseId !== undefined) this.responseStreams.delete(responseId)
         if (responseId !== undefined) this.responseLastSequences.delete(responseId)
@@ -571,7 +734,6 @@ export class VoiceConnection {
       case 'error': {
         const error = event.error as Record<string, unknown> | undefined
         const message = typeof error?.message === 'string' ? error.message : '百炼实时语音服务返回错误。'
-        if (/no active response/i.test(message) && this.suppressedResponses.size > 0) return
         this.ctx.logger.warn(`[realtime-voice] provider error: ${message}`)
         this.fail('provider-error', message, true)
         return
@@ -583,12 +745,46 @@ export class VoiceConnection {
   private async handleFunctionCall(event: DashScopeServerEvent): Promise<void> {
     const callId = field(event, 'call_id')
     const name = field(event, 'name')
+    if (!this.supervisor && this.directory && ['list_voice_tasks', 'read_voice_task_result'].includes(name)) {
+      if (!callId || this.handledProviderFunctionCalls.has(callId)) return
+      this.handledProviderFunctionCalls.add(callId)
+      try {
+        const args = parseSupervisorArguments(name, field(event, 'arguments'))
+        const result = name === 'list_voice_tasks' ? await this.directory.listTasks()
+          : await this.directory.readResult(args.taskId!)
+        this.reportReadOnly = true
+        this.provider?.updateTools(this.callTools(true))
+        this.provider?.completeFunctionCall(callId, result)
+      } catch (error) {
+        this.provider?.completeFunctionCall(callId, { status: 'failed', error: String(error) })
+      }
+      return
+    }
+    if (this.supervisor && SUPERVISOR_TOOL_NAMES.includes(name as never)) {
+      if (!callId || this.closed || this.handledProviderFunctionCalls.has(callId)) return
+      this.handledProviderFunctionCalls.add(callId)
+      try {
+        const output = await this.supervisor.execute(name, field(event, 'arguments'))
+        if (name === 'read_voice_task_result') {
+          this.reportReadOnly = true
+          this.provider?.updateTools(this.callTools(true))
+        }
+        this.provider?.completeFunctionCall(callId, output)
+      } catch (error) {
+        this.provider?.completeFunctionCall(callId, { status: 'failed', error: String(error) })
+      }
+      return
+    }
     if (callId === '' || name === '' || this.closed || this.functionBridge === undefined
       || this.handledProviderFunctionCalls.has(callId)) return
     // Preserve the legacy provider-socket behavior: a duplicate upstream event
     // must not create a second function_call_output item. The shared bridge still
     // supplies continuity-scoped execution idempotency across reconnects.
     this.handledProviderFunctionCalls.add(callId)
+    if (this.reportReadOnly && (name === 'handoff_to_dsh_agent' || name === 'cancel_dsh_agent')) {
+      this.provider?.completeFunctionCall(callId, { status: 'needs-clarification', message: '当前只汇报结果。请等待用户提出新的执行要求。' })
+      return
+    }
     this.send({ type: 'voice.tool', serverSeq: this.nextSeq(), callId, name, status: 'started' })
     const result = await this.functionBridge.execute(
       callId,
@@ -616,6 +812,7 @@ export class VoiceConnection {
     const request = { rpcId: this.rpcId(), payload: {} }
     void (async () => {
       for await (const item of this.ctx.apiProxy.events.host(request, abort.signal)) {
+        if (abort.signal.aborted) return
         const frame = item.payload
         if (frame.type === 'host/session-status' && frame.sessionId === sessionId) {
           this.dshTurnRunning = frame.running
@@ -648,6 +845,7 @@ export class VoiceConnection {
     const muxRequest = { rpcId: this.rpcId(), payload: {} }
     void (async () => {
       for await (const item of this.ctx.apiProxy.events.mux(muxRequest, abort.signal)) {
+        if (abort.signal.aborted) return
         const frame = item.payload
         if (!('sessionId' in frame) || frame.sessionId !== sessionId) continue
         if (frame.type === 'approval/requested') {
@@ -792,10 +990,13 @@ export class VoiceConnection {
         this.pendingAssistantByTurn.delete(key)
         const reason = turnEndKind(data.reason)
         const ended = this.coordinator?.markTurnEnded(turn, reason) ?? []
-        // The user is on the call and about to hear this result. Mark the
-        // call-back entry delivered so hanging up does not ring them about
-        // news the live surface already spoke.
-        for (const record of ended) this.inbox?.markHandoffDelivered(record.handoffId)
+        const attemptId = `backend_complete_${sessionId}_${turn}`
+        const reportId = `inbox_turn_${sessionId}_${turn}`
+        if (!this.reportAttempts.has(attemptId) && this.reportDelivery.state(reportId) !== 'completed') {
+          this.reportAttempts.set(attemptId, [reportId])
+          this.reportDelivery.begin(reportId, `${attemptId}:${reportId}`)
+          this.reportHandoffs.set(reportId, ended.map(record => record.handoffId))
+        }
         this.progressGate.markTurnEnded()
         this.dshTurnRunning = false
         this.refreshAgentWorkPending()
@@ -809,7 +1010,7 @@ export class VoiceConnection {
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
         this.progressCoalescer.settle({
-          id: `backend_complete_${event.seq}`,
+          id: attemptId,
           text: `${completionTag} ${resultText}\n这是绑定 DSH 任务的权威终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
           body: resultText,
           kind: 'complete',
@@ -872,6 +1073,13 @@ export class VoiceConnection {
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
         const group = `${sessionId}:${data.turn}`
+        const attemptId = `backend_complete_${sessionId}_${data.turn}`
+        const reportId = `inbox_turn_${sessionId}_${data.turn}`
+        if (!this.reportAttempts.has(attemptId) && this.reportDelivery.state(reportId) !== 'completed') {
+          this.reportAttempts.set(attemptId, [reportId])
+          this.reportDelivery.begin(reportId, `${attemptId}:${reportId}`)
+          this.reportHandoffs.set(reportId, ended.map(record => record.handoffId))
+        }
         this.send({
           type: 'voice.agent-status',
           serverSeq: this.nextSeq(),
@@ -884,7 +1092,7 @@ export class VoiceConnection {
         // announcement id, so a reconnect that replayed a turn the call had
         // already spoken repeated it verbatim.
         this.progressCoalescer.settle({
-          id: `backend_recovered_complete_${String(typed.seq ?? data.turn)}`,
+          id: attemptId,
           text: `${completionTag} ${resultText}\n这是重连后从 DSH 权威历史恢复的终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
           body: resultText,
           kind: 'complete',
@@ -1009,6 +1217,12 @@ export class VoiceConnection {
     const sequence = this.outputSeq
     const generation = this.browserAudioGeneration
     this.responseStreams.set(responseId, this.outputStreamId)
+    const attempt = this.responseAttempts.get(responseId)
+    if (attempt !== undefined) {
+      const attempts = this.streamAttempts.get(this.outputStreamId) ?? new Set<string>()
+      attempts.add(attempt)
+      this.streamAttempts.set(this.outputStreamId, attempts)
+    }
     this.responseLastSequences.set(responseId, sequence)
     const frame = encodeAudioFrame(
       AudioFrameKind.ServerOutput,
@@ -1144,7 +1358,16 @@ export class VoiceConnection {
   }
 
   /** Stop one response exactly once, even when local and provider VAD race. */
-  private interruptActiveResponse(reason: 'barge-in' | 'cancelled', cancelProvider: boolean): void {
+  private interruptActiveResponse(reason: 'barge-in' | 'cancelled', cancelProvider: boolean, source?: 'local-vad' | 'user'): void {
+    this.trace('cancel', { source: source ?? (cancelProvider ? 'user' : 'server-vad') })
+    const interruptedAttempts = new Set([...this.streamAttempts.values()].flatMap(attempts => [...attempts]))
+    const activeAttempt = this.activeResponseId === undefined ? undefined : this.responseAttempts.get(this.activeResponseId)
+    if (activeAttempt !== undefined) interruptedAttempts.add(activeAttempt)
+    for (const attempt of interruptedAttempts) {
+      for (const id of this.reportAttempts.get(attempt) ?? []) this.reportDelivery.interrupt(`${attempt}:${id}`)
+    }
+    this.streamAttempts.clear()
+    this.attemptFinalSequences.clear()
     const responseId = this.activeResponseId
     if (responseId !== undefined) {
       if (this.suppressedResponses.has(responseId)) return
@@ -1179,6 +1402,7 @@ export class VoiceConnection {
   }
 
   private fail(code: string, message: string, recoverable: boolean): void {
+    this.trace('error', { source: 'transport' })
     this.send({ type: 'voice.error', serverSeq: this.nextSeq(), code, message, recoverable })
     if (!recoverable) this.dispose(code)
   }

@@ -41,6 +41,8 @@ export interface VoiceInboxEntry {
   durationMs: number
   /** True once the voice surface has spoken this report. */
   delivered: boolean
+  snoozed?: boolean
+  requiresOriginalSession?: boolean
 }
 
 export interface WatchHandoffInput {
@@ -105,6 +107,38 @@ export class VoiceInbox {
   /** Handoffs the live call already spoke, seen before or after their entry. */
   private readonly spokenHandoffs = new Set<string>()
   private titleLookup: ((sessionId: string) => Promise<string | undefined>) | undefined
+  private onChange: (() => void) | undefined
+  private readonly completedTurns = new Set<string>()
+  storageError: string | undefined
+
+  setOnChange(listener: (() => void) | undefined): void { this.onChange = listener }
+
+  restore(entries: VoiceInboxEntry[]): void {
+    const current = new Set(this.entries.map(entry => entry.id))
+    this.entries.unshift(...entries.filter(entry => !current.has(entry.id)))
+    for (const entry of entries) this.completedTurns.add(entry.id)
+  }
+
+  snooze(ids: readonly string[]): void {
+    for (const entry of this.entries) if (ids.includes(entry.id)) entry.snoozed = true
+    this.onChange?.()
+  }
+
+  private trim(): void {
+    while (this.entries.length > MAX_INBOX_ENTRIES) {
+      const index = this.entries.findIndex(entry => entry.delivered)
+      const fallback = this.entries.findIndex(entry => entry.kind !== 'needs-input')
+      const remove = index >= 0 ? index : fallback
+      if (remove < 0) {
+        const entry = this.entries.pop()
+        if (entry?.interactionId !== undefined) {
+          this.pending.delete(entry.interactionId)
+          this.delegateInteraction?.(entry.interactionId)
+        }
+      } else this.entries.splice(remove, 1)
+    }
+    this.onChange?.()
+  }
 
   watch(input: WatchHandoffInput): void {
     this.watched.set(input.handoffId, { ...input, createdAt: Date.now() })
@@ -184,7 +218,7 @@ export class VoiceInbox {
       return undefined
     }
     this.entries.push(entry)
-    while (this.entries.length > MAX_INBOX_ENTRIES) this.entries.shift()
+    this.trim()
     return { ...entry }
   }
 
@@ -209,7 +243,7 @@ export class VoiceInbox {
       this.entries.push(entry)
       released.push({ ...entry })
     }
-    while (this.entries.length > MAX_INBOX_ENTRIES) this.entries.shift()
+    if (released.length > 0) this.trim()
     return released
   }
 
@@ -226,6 +260,7 @@ export class VoiceInbox {
     const index = this.entries.findIndex(entry => entry.interactionId === interactionId)
     if (index === -1) return undefined
     const [removed] = this.entries.splice(index, 1)
+    this.onChange?.()
     return removed === undefined ? undefined : { ...removed }
   }
 
@@ -265,6 +300,7 @@ export class VoiceInbox {
       entry.delivered = true
       delivered.push({ ...entry })
     }
+    if (delivered.length > 0) this.onChange?.()
     return delivered
   }
 
@@ -284,6 +320,7 @@ export class VoiceInbox {
     }
     if (entry.delivered) return undefined
     entry.delivered = true
+    this.onChange?.()
     return { ...entry }
   }
 
@@ -303,13 +340,16 @@ export class VoiceInbox {
       }
       removed += 1
     }
+    if (removed > 0) this.onChange?.()
     return removed
   }
 
   clear(): void {
+    for (const id of this.pending.keys()) this.delegateInteraction?.(id)
     this.entries.length = 0
     this.deferred.clear()
     this.pending.clear()
+    this.onChange?.()
   }
 
   /**
@@ -402,13 +442,18 @@ export class VoiceInbox {
     const key = `${sessionId}:${turn}`
     const summary = this.pendingAssistant.get(key)
     this.pendingAssistant.delete(key)
-    return this.completeTurn(sessionId, turnEndStatus(data?.reason), summary)
+    const reportId = `inbox_turn_${sessionId}_${turn}`
+    if (this.completedTurns.has(reportId)) return undefined
+    const result = this.completeTurn(sessionId, turnEndStatus(data?.reason), summary, reportId)
+    if (result !== undefined) this.completedTurns.add(reportId)
+    return result
   }
 
   private completeTurn(
     sessionId: string,
     status: VoiceInboxStatus,
     summary: string | undefined,
+    reportId: string,
   ): VoiceInboxEntry | undefined {
     const watch = this.newestWatch(sessionId)
     if (watch === undefined) return undefined
@@ -416,7 +461,7 @@ export class VoiceInbox {
     const alreadySpoken = this.spokenHandoffs.delete(watch.handoffId)
     const now = Date.now()
     const entry: VoiceInboxEntry = {
-      id: `inbox_${randomUUID()}`,
+      id: reportId,
       handoffId: watch.handoffId,
       sessionId,
       ...(watch.sessionTitle === undefined ? {} : { sessionTitle: watch.sessionTitle }),
@@ -428,7 +473,7 @@ export class VoiceInbox {
       delivered: alreadySpoken,
     }
     this.entries.push(entry)
-    while (this.entries.length > MAX_INBOX_ENTRIES) this.entries.shift()
+    this.trim()
     const titleLookup = this.titleLookup
     if (titleLookup !== undefined && entry.sessionTitle === undefined) {
       // Best effort: the ring must not wait on the session list.

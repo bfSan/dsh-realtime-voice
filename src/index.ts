@@ -2,6 +2,7 @@
 import type { Duplex } from 'node:stream'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
@@ -28,6 +29,9 @@ import { REALTIME_VOICE_SETTINGS_NAMESPACE } from './models.ts'
 import { registerDefaultHandoffSkill } from './host/handoff-skill.ts'
 import { startVoiceInbox, VoiceInbox } from './host/voice-inbox.ts'
 import type { HandoffGuidanceRuntime } from './host/handoff-guidance.ts'
+import { InboxPersistence, parseStoredInbox, type InboxGlobal } from './host/inbox-persistence.ts'
+import { VoiceTaskDirectory, type VoiceProject, type VoiceAgent } from './host/voice-task-directory.ts'
+import { VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
 
 export { Config }
 export type { VoiceConfig }
@@ -67,6 +71,79 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   const connections = new Set<{ dispose(reason?: string): void }>()
   const voiceRuntime = new VoiceRuntime()
   const inbox = new VoiceInbox()
+  const directoryServices: {
+    projects?: () => Promise<VoiceProject[]>
+    agents?: () => Promise<VoiceAgent[]>
+    controller?: Context['sessionController']
+  } = {}
+  ctx.inject(['workspaceRegistry'], registryCtx => {
+    const registry = (registryCtx as unknown as { workspaceRegistry: { list(): VoiceProject[] } }).workspaceRegistry
+    directoryServices.projects = async () => registry.list().map(row => ({ id: row.id, path: row.path, title: row.title }))
+    registryCtx.effect(() => () => { delete directoryServices.projects }, 'voice project directory')
+  })
+  ctx.inject(['agentPresets'], presetsCtx => {
+    const presets = (presetsCtx as unknown as { agentPresets: { list(): Promise<VoiceAgent[]> } }).agentPresets
+    directoryServices.agents = async () => (await presets.list()).map(row => ({
+      id: row.id, ...(row.name === undefined ? {} : { name: row.name }),
+      ...(row.broken === undefined ? {} : { broken: row.broken }),
+    }))
+    presetsCtx.effect(() => () => { delete directoryServices.agents }, 'voice agent directory')
+  })
+  ctx.inject(['sessionController'], controllerCtx => {
+    directoryServices.controller = controllerCtx.sessionController
+    controllerCtx.effect(() => () => { delete directoryServices.controller }, 'voice task directory')
+  })
+  const controller = () => {
+    if (!directoryServices.controller) throw new Error('DSH 会话服务尚未就绪')
+    return directoryServices.controller
+  }
+  const directory = new VoiceTaskDirectory({
+    projects: async () => {
+      if (!directoryServices.projects) throw new Error('DSH 项目目录不可用')
+      return directoryServices.projects()
+    },
+    agents: async () => {
+      if (!directoryServices.agents) throw new Error('DSH Agent 目录不可用')
+      return directoryServices.agents()
+    },
+    tasks: async () => (await controller().list({}, new AbortController().signal)).items,
+    history: async sessionId => {
+      const page = await controller().page({ address: { kind: 'session', sessionId: SessionId(sessionId) }, throughSeq: -1, maxMessages: 200 }, new AbortController().signal)
+      return page.records.map(record => typeof record === 'object' && record !== null && 'event' in record ? record.event : record)
+    },
+    create: async input => controller().create(input as Parameters<Context['sessionController']['create']>[0]),
+  })
+  ctx.inject(['storageDomain'], (storageCtx) => {
+    const storage = (storageCtx as unknown as { storageDomain: {
+      open(spec: unknown): Promise<{ global: InboxGlobal; close(): Promise<void> }>
+    } }).storageDomain
+    let disposed = false
+    let close: (() => Promise<void>) | undefined
+    const setup = (async () => {
+      const domain = await storage.open({
+        name: 'realtime-voice-inbox', version: 1, tables: {},
+        global: { schema: { parse: parseStoredInbox }, initial: { schemaVersion: 1, entries: [] } },
+      })
+      close = () => domain.close()
+      if (disposed) return
+      const persistence = new InboxPersistence(domain.global)
+      const stored = await persistence.load()
+      inbox.restore(stored.entries)
+      inbox.setOnChange(() => {
+        void persistence.save({ schemaVersion: 1, entries: inbox.list() }).catch(() => {
+          inbox.storageError = '回拨状态保存失败，请保留当前窗口并检查 DSH 存储。'
+        })
+      })
+    })().catch(() => {
+      inbox.storageError = '回拨历史恢复失败；原存储未覆盖。本次新回拨仍可使用。'
+    })
+    storageCtx.effect(() => async () => {
+      disposed = true
+      inbox.setOnChange(undefined)
+      await setup
+      await close?.()
+    }, 'realtime-voice: durable inbox')
+  })
   let readConfig = (): VoiceConfig => config
 
   // The call-back inbox runs for the lifetime of the plugin, not of a call:
@@ -130,6 +207,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
         voiceRuntime,
         inbox,
         guidanceRuntime,
+        directory,
       )
       connections.add(connection)
     })
@@ -176,8 +254,8 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   }
 
   const callbacks = (request: IncomingMessage, response: ServerResponse): void => {
-    if (request.method !== 'GET' && request.method !== 'DELETE') {
-      response.writeHead(405, { Allow: 'GET, DELETE' })
+    if (request.method !== 'GET' && request.method !== 'DELETE' && request.method !== 'PATCH') {
+      response.writeHead(405, { Allow: 'GET, DELETE, PATCH' })
       response.end()
       return
     }
@@ -190,7 +268,13 @@ export function apply(ctx: Context, config: VoiceConfig): void {
       const ids = new URL(request.url ?? VOICE_INBOX_ROUTE, 'http://localhost').searchParams.getAll('id')
       inbox.dismiss(ids)
     }
-    const snapshot: VoiceInboxSnapshot = { protocol: VOICE_PROTOCOL, entries: inbox.list() }
+    if (request.method === 'PATCH') {
+      inbox.snooze(new URL(request.url ?? VOICE_INBOX_ROUTE, 'http://localhost').searchParams.getAll('id'))
+    }
+    const snapshot: VoiceInboxSnapshot = {
+      protocol: VOICE_PROTOCOL, entries: inbox.list(),
+      ...(inbox.storageError === undefined ? {} : { error: inbox.storageError }),
+    }
     response.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -199,12 +283,28 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   }
 
   ctx.effect(() => {
+    const unregisterDirectory = ctx.webServer.register({
+      kind: 'exact', path: VOICE_DIRECTORY_ROUTE,
+      handler: (request, response) => {
+        if (request.method !== 'GET' || !isLoopback(request.socket.remoteAddress) || !isAllowedOrigin(request)) {
+          response.writeHead(403); response.end(); return
+        }
+        void Promise.all([directory.listProjects(), directory.listAgents(), directory.listTasks()]).then(([projects, agents, tasks]) => {
+          response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+          response.end(JSON.stringify({ projects, agents, tasks }))
+        }).catch(() => {
+          response.writeHead(503, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({ error: 'DSH 项目、Agent 或会话目录尚不可用，请重试。' }))
+        })
+      },
+    })
     const unregisterStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_STATUS_ROUTE, handler: status })
     const unregisterDirectStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE, handler: status })
     const unregisterInbox = ctx.webServer.register({ kind: 'exact', path: VOICE_INBOX_ROUTE, handler: callbacks })
     const unregister = ctx.webServer.registerUpgrade({ path: VOICE_ROUTE, handler: upgradeProxy })
     const unregisterDirect = ctx.webServer.registerUpgrade({ path: VOICE_DIRECT_ROUTE, handler: upgradeDirect })
     return async () => {
+      unregisterDirectory()
       unregisterDirect()
       unregister()
       unregisterInbox()

@@ -11,6 +11,7 @@ export interface VoiceBootstrapStatus {
 }
 export interface VoiceStyleOptions {
     stylePrompt?: string;
+    taskDirectory?: boolean;
 }
 export declare function buildVoiceInstructions(status: VoiceBootstrapStatus, continuity?: Pick<VoiceContinuityState, 'userTranscript' | 'assistantTranscript'>, style?: VoiceStyleOptions): string;
 export declare function buildDirectMediaOfferBootstrap(config: VoiceConfig, instructions: string, checkpoint?: DirectTranscriptCheckpoint): DirectMediaOffer['bootstrap'];

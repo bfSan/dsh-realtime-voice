@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-voice-supervisor-design.md`
 
+## 执行进度（2026-09-21）
+
+已在隔离分支 `feat/voice-supervisor` 落地回拨交付跟踪、取消竞态处理、列表确认与布局、
+DSH domain 条目持久化、权威任务目录、独立协议及路由、全局拨号菜单、两套 Skill 配置。
+自动化证据与人工边界统一记录在 `docs/testing/voice-supervisor-acceptance.md`。
+
+本文件原步骤的桌面/麦克风复现项尚未勾选：Mac 锁定，不能把模拟测试代替真实听感验收。
+因此 alpha.19 是供用户试用的实现版本，不是“全部问题已修复”的结论。
+阶段实现集中提交，保留旧 alpha.18 回退；工作树保留用于后续人工验收修正。
+
 ## Global Constraints
 
 - 基线：v0.1.0-alpha.18，DSH 0.1.5-rc.2。

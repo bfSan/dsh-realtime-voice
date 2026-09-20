@@ -33,6 +33,8 @@ export interface VoiceModelSettingsValue {
   progressQuietTaskMs?: number
   handoffSkill?: string
   handoffInstructions?: string
+  supervisorSkill?: string
+  supervisorInstructions?: string
   ringDurationMs?: number
   apiKeyEnv?: string
 }
@@ -53,6 +55,8 @@ export interface VoiceModelSettingsSnapshot {
   progressQuietTaskMs: number
   handoffSkill: string
   handoffInstructions: string
+  supervisorSkill: string
+  supervisorInstructions: string
   ringDurationMs: number
   saving: boolean
   error: string | undefined
@@ -92,6 +96,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     progressQuietTaskMs: DEFAULT_PROGRESS_QUIET_TASK_MS,
     handoffSkill: '',
     handoffInstructions: '',
+    supervisorSkill: '',
+    supervisorInstructions: '',
     ringDurationMs: DEFAULT_RING_DURATION_MS,
     saving: false,
     error: undefined,
@@ -219,6 +225,17 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     await this.writeSetting('handoffInstructions', trimmed, 'DSH 没有接受该汇报指令。')
   }
 
+  async setSupervisorSkill(value: string): Promise<void> {
+    const trimmed = value.trim()
+    if (trimmed.length > MAX_HANDOFF_SKILL_LENGTH || (trimmed && !isHandoffSkillOrPath(trimmed))) return
+    await this.writeSetting('supervisorSkill', trimmed, 'DSH 没有接受语音总管 Skill 设置。')
+  }
+
+  async setSupervisorInstructions(value: string): Promise<void> {
+    if (value.trim().length > MAX_HANDOFF_INSTRUCTIONS_LENGTH) return
+    await this.writeSetting('supervisorInstructions', value.trim(), 'DSH 没有接受语音总管指令。')
+  }
+
   async setRingDuration(ringDurationMs: number): Promise<void> {
     if (!Number.isInteger(ringDurationMs) || ringDurationMs < 0 || ringDurationMs > 60_000) return
     await this.writeSetting('ringDurationMs', ringDurationMs, 'DSH 没有接受该响铃时长。')
@@ -329,6 +346,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
       progressQuietTaskMs,
       handoffSkill,
       handoffInstructions,
+      supervisorSkill: scope.value?.supervisorSkill ?? '',
+      supervisorInstructions: scope.value?.supervisorInstructions ?? '',
       ringDurationMs,
       apiKeyRef,
       ...(apiKeyRef === previousRef ? {} : { apiKeyConfigured: false }),
@@ -425,6 +444,10 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
     && (typeof rawHandoffInstructions !== 'string'
       || rawHandoffInstructions.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH)) return undefined
   const rawRingDuration = (value as Record<string, unknown>).ringDurationMs
+  const supervisorSkill = (value as Record<string, unknown>).supervisorSkill ?? ''
+  const supervisorInstructions = (value as Record<string, unknown>).supervisorInstructions ?? ''
+  if (typeof supervisorSkill !== 'string' || supervisorSkill.length > MAX_HANDOFF_SKILL_LENGTH
+    || typeof supervisorInstructions !== 'string' || supervisorInstructions.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH) return undefined
   if (rawRingDuration !== undefined
     && (typeof rawRingDuration !== 'number'
       || !Number.isInteger(rawRingDuration)
@@ -444,6 +467,8 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
     progressQuietTaskMs,
     handoffSkill: rawHandoffSkill ?? '',
     handoffInstructions: rawHandoffInstructions ?? '',
+    supervisorSkill,
+    supervisorInstructions,
     ringDurationMs: rawRingDuration ?? DEFAULT_RING_DURATION_MS,
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
   }

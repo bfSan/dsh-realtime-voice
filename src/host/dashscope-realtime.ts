@@ -1,4 +1,5 @@
 import WebSocket, { type ClientOptions } from 'ws'
+import { randomUUID } from 'node:crypto'
 import type { VoiceConfig } from './config.ts'
 
 const MAX_PROVIDER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
@@ -34,6 +35,8 @@ export class DashScopeRealtime {
   private readonly queuedAnnouncements: VoiceAnnouncement[] = []
   private readonly announcedIds = new Set<string>()
   private responseActive = false
+  private pendingAnnouncementId: string | undefined
+  private readonly cancellations = new Map<string, number>()
   private responseRequested = false
   private followupResponsePending = false
   private inputSpeechActive = false
@@ -147,7 +150,11 @@ export class DashScopeRealtime {
   }
 
   cancelResponse(): void {
-    this.send({ type: 'response.cancel' })
+    if (!this.responseActive || this.closed) return
+    const eventId = randomUUID()
+    this.cancellations.set(eventId, Date.now())
+    while (this.cancellations.size > 32) this.cancellations.delete(this.cancellations.keys().next().value!)
+    this.send({ type: 'response.cancel', event_id: eventId })
   }
 
   /** Return a completed Function Call without blocking the live conversation. */
@@ -189,8 +196,31 @@ export class DashScopeRealtime {
   }
 
   private handleEvent(event: DashScopeServerEvent): void {
+    if (event.type === 'error') {
+      const error = event.error as { event_id?: string; message?: string } | undefined
+      const at = error?.event_id === undefined ? undefined : this.cancellations.get(error.event_id)
+      if (at !== undefined && Date.now() - at < 30_000 && /no active response/i.test(error?.message ?? '')) {
+        this.cancellations.delete(error!.event_id!)
+        this.emitEvent({ type: 'response.cancel-settled', requestId: error!.event_id })
+        return
+      }
+    }
+    // Update response ownership before callbacks can synchronously cancel it.
+    if (event.type === 'response.created') {
+      this.responseActive = true
+      if (this.pendingAnnouncementId !== undefined) {
+        event = { ...event, announcementId: this.pendingAnnouncementId }
+        this.pendingAnnouncementId = undefined
+      }
+    }
+    if (event.type === 'response.done') {
+      this.responseActive = false
+    }
     this.emitEvent(event)
     if (event.type === 'input_audio_buffer.speech_started') {
+      // A user automatic turn can race a requested announcement. If ownership
+      // is ambiguous, never mark that report delivered from the next response.
+      this.pendingAnnouncementId = undefined
       this.inputSpeechActive = true
       this.automaticTurnPending = true
       return
@@ -217,6 +247,14 @@ export class DashScopeRealtime {
     this.drainAgentAnnouncements()
   }
 
+  updateInstructions(instructions: string): void {
+    this.send({ type: 'session.update', session: { instructions } })
+  }
+
+  updateTools(tools: readonly RealtimeFunctionTool[]): void {
+    this.send({ type: 'session.update', session: { tools } })
+  }
+
   private drainAgentAnnouncements(): void {
     if (this.closed
       || this.inputSpeechActive
@@ -225,6 +263,7 @@ export class DashScopeRealtime {
       || this.responseRequested
       || this.queuedAnnouncements.length === 0) return
     const announcement = this.queuedAnnouncements.shift()!
+    this.pendingAnnouncementId = announcement.id
     this.send({
       type: 'conversation.item.create',
       item: {

@@ -1,12 +1,12 @@
 /** Versioned client-neutral wire contract shared by WebUI and WeChat Mini Program clients. */
 export declare const VOICE_PROTOCOL: "dsh.voice.v1";
 export declare const VOICE_DIRECT_PROTOCOL: "dsh.voice.direct.v1";
-export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_PROTOCOL;
+export type VoiceControlProtocol = typeof VOICE_PROTOCOL | typeof VOICE_DIRECT_PROTOCOL | 'dsh.voice.supervisor.v1';
 export declare const VOICE_PROTOCOL_VERSION: 1;
 export declare const VOICE_ROUTE: "/plugins/realtime-voice/v1";
 export declare const VOICE_STATUS_ROUTE: "/plugins/realtime-voice/v1/status";
 export declare const VOICE_INBOX_ROUTE: "/plugins/realtime-voice/v1/inbox";
-export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.18";
+export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.19";
 /**
  * One handoff the voice surface owes the user a conversation about.
  *
@@ -38,10 +38,13 @@ export interface VoiceInboxEntry {
     /** Wall-clock duration of the delegated turn, used to skip trivial tasks. */
     durationMs: number;
     delivered: boolean;
+    snoozed?: boolean;
+    requiresOriginalSession?: boolean;
 }
 export interface VoiceInboxSnapshot {
     protocol: typeof VOICE_PROTOCOL;
     entries: readonly VoiceInboxEntry[];
+    error?: string;
 }
 export declare const INPUT_SAMPLE_RATE: 16000;
 export declare const OUTPUT_SAMPLE_RATE: 24000;
@@ -121,9 +124,11 @@ export type VoiceClientControl = VoiceHello | {
     reason?: string;
 } | {
     type: 'voice.cancel-response';
+    source?: 'local-vad' | 'user';
 } | {
     type: 'voice.playback-drained';
     streamId: number;
+    lastSequence?: number;
 } | {
     type: 'voice.commit';
 } | {
@@ -143,7 +148,7 @@ export type VoiceClientControl = VoiceHello | {
 };
 export interface VoiceReady {
     type: 'voice.ready';
-    protocol: typeof VOICE_PROTOCOL;
+    protocol: typeof VOICE_PROTOCOL | 'dsh.voice.supervisor.v1';
     voiceSessionId: string;
     serverSeq: number;
     target: {
@@ -185,6 +190,11 @@ export interface VoiceOccupancyStatus {
     owner?: VoiceOccupancyOwner;
 }
 export type VoiceServerControl = VoiceReady | {
+    type: 'voice.task-selected';
+    serverSeq: number;
+    sessionId: string;
+    running: boolean;
+} | {
     type: 'voice.busy';
     serverSeq: number;
     occupancy: VoiceOccupancyStatus;

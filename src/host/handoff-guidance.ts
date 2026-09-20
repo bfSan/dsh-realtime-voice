@@ -61,7 +61,7 @@ export function looksLikeGuidancePath(value: string): boolean {
  */
 export async function resolveHandoffGuidance(
   runtime: HandoffGuidanceRuntime,
-  config: VoiceConfig,
+  config: Pick<VoiceConfig, 'handoffSkill' | 'handoffInstructions'>,
   options: HandoffGuidanceContext,
 ): Promise<HandoffGuidance> {
   const skillName = config.handoffSkill.trim()

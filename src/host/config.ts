@@ -43,6 +43,8 @@ export interface VoiceConfig {
   handoffSkill: string
   /** Ad-hoc rules appended after the configured skill body. */
   handoffInstructions: string
+  supervisorSkill: string
+  supervisorInstructions: string
   /**
    * How long an incoming report rings before falling silent. The report stays
    * in the call-back list either way; zero disables the sound entirely.
@@ -75,6 +77,8 @@ export const Config: z<VoiceConfig> = z.object({
   stylePrompt: z.string().default(''),
   handoffSkill: z.string().default(''),
   handoffInstructions: z.string().default(''),
+  supervisorSkill: z.string().default(''),
+  supervisorInstructions: z.string().default(''),
   ringDurationMs: z.natural().min(0).max(60_000).default(DEFAULT_RING_DURATION_MS),
   maxConnections: z.natural().min(1).max(32).default(4),
   maxBinaryFrameBytes: z.natural().min(1024).max(1024 * 1024).default(64 * 1024),

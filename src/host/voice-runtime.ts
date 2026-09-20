@@ -29,6 +29,8 @@ export interface DirectVoiceContinuityState {
 }
 
 export interface VoiceContinuityState {
+  supervisorTaskId?: string
+  supervisorCoordinators?: Map<string, DshVoiceCoordinatorState>
   id: string
   protocol: VoiceControlProtocol
   sessionId: string
@@ -213,7 +215,7 @@ export class VoiceRuntime {
     this.sweep()
     const lease = this.activeLease
     if (lease !== undefined && lease.sessionId === sessionId) return true
-    for (const state of this.calls.values()) if (state.sessionId === sessionId) return true
+    for (const state of this.calls.values()) if (state.sessionId === sessionId || state.supervisorTaskId === sessionId) return true
     return false
   }
 

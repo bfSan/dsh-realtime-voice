@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { Config } from '../src/host/config.ts'
+import { ReportDelivery } from '../src/host/report-delivery.ts'
 import { negotiateVoiceAudio, validateAudioNegotiation, VoiceConnection } from '../src/host/voice-connection.ts'
 import {
   AudioFrameFlags,
@@ -71,6 +72,53 @@ function binaryFrames(socket: FakeBrowserSocket) {
 }
 
 describe('Host audio flow', () => {
+  it('does not acknowledge the next report from a stale playback sequence', async () => {
+    const { connection, socket, internal } = createConnection()
+    const reports = connection as unknown as {
+      reportDelivery: ReportDelivery
+      reportAttempts: Map<string, string[]>
+      receive(raw: Buffer, binary: boolean): Promise<void>
+    }
+    for (const n of [1, 2]) {
+      const attempt = `a${n}`, report = `r${n}`, response = `response-${n}`
+      reports.reportAttempts.set(attempt, [report])
+      reports.reportDelivery.begin(report, `${attempt}:${report}`)
+      internal.onProviderEvent({ type: 'response.created', response: { id: response }, announcementId: attempt })
+      internal.onProviderEvent({ type: 'response.audio.delta', response_id: response, delta: Buffer.alloc(100, n).toString('base64') })
+      internal.onProviderEvent({ type: 'response.done', response: { id: response, status: 'completed' } })
+    }
+    await vi.waitFor(() => expect(binaryFrames(socket)).toHaveLength(2))
+    const first = binaryFrames(socket)[0]!
+    await reports.receive(Buffer.from(JSON.stringify({ type: 'voice.playback-drained', streamId: first.streamId, lastSequence: first.sequence })), false)
+    expect(reports.reportDelivery.state('r1')).toBe('completed')
+    expect(reports.reportDelivery.state('r2')).toBe('playing')
+    connection.dispose()
+  })
+
+  it('associates a short report tail with its playback stream and preserves queued reports on interruption', async () => {
+    const { connection, socket, internal } = createConnection()
+    const reports = connection as unknown as {
+      reportDelivery: ReportDelivery
+      reportAttempts: Map<string, string[]>
+      streamAttempts: Map<number, Set<string>>
+      interruptActiveResponse(reason: 'cancelled', cancelProvider: boolean): void
+    }
+    reports.reportAttempts.set('a1', ['r1'])
+    reports.reportDelivery.begin('r1', 'a1:r1')
+    reports.reportAttempts.set('a2', ['r2'])
+    reports.reportDelivery.begin('r2', 'a2:r2')
+    internal.onProviderEvent({ type: 'response.created', response: { id: 'response-a' }, announcementId: 'a1' })
+    internal.onProviderEvent({ type: 'response.audio.delta', response_id: 'response-a', delta: Buffer.alloc(100, 1).toString('base64') })
+    internal.onProviderEvent({ type: 'response.done', response: { id: 'response-a', status: 'completed' } })
+    await vi.waitFor(() => expect(binaryFrames(socket)).toHaveLength(1))
+    const stream = binaryFrames(socket)[0]!.streamId
+    expect(reports.streamAttempts.get(stream)).toEqual(new Set(['a1']))
+    reports.interruptActiveResponse('cancelled', false)
+    expect(reports.reportDelivery.state('r1')).toBe('interrupted')
+    expect(reports.reportDelivery.state('r2')).toBe('queued')
+    connection.dispose()
+  })
+
   it('sends fixed packets with exact sequence/PTS and flushes the even tail before finalize', async () => {
     const { connection, socket, internal } = createConnection()
     const source = Uint8Array.from({ length: OUTPUT_FRAME_BYTES * 2 + 500 }, (_, index) => index % 239)

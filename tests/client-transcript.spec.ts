@@ -48,7 +48,7 @@ describe('assistant realtime transcript', () => {
     internal.handleLocalSpeechStart()
 
     expect(interruptPlayback).toHaveBeenCalledTimes(1)
-    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'voice.cancel-response' }))
+    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'voice.cancel-response', source: 'local-vad' }))
     expect(controller.getSnapshot().phase).toBe('listening')
     await controller.dispose()
   })

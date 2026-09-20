@@ -69,6 +69,32 @@ function createProvider(
 }
 
 describe('DashScope realtime provider', () => {
+  it('never cancels an idle response', async () => {
+    const socket = new FakeSocket()
+    const provider = createProvider(socket)
+    await provider.connect()
+    provider.cancelResponse()
+    expect(socket.sent.filter(message => message.type === 'response.cancel')).toEqual([])
+    provider.close()
+  })
+
+  it('settles only correlated late cancellation errors without ending the call', async () => {
+    const socket = new FakeSocket()
+    const events: Record<string, unknown>[] = []
+    const provider = createProvider(socket, config, event => events.push(event))
+    await provider.connect()
+    socket.event({ type: 'response.created', response: { id: 'r1' } })
+    provider.cancelResponse()
+    const cancel = socket.sent.find(message => message.type === 'response.cancel')!
+    expect(cancel.event_id).toBeTypeOf('string')
+    socket.event({ type: 'response.done', response: { id: 'r1' } })
+    socket.event({ type: 'error', error: { event_id: cancel.event_id, message: 'Conversation has no active response.' } })
+    expect(events.filter(event => event.type === 'error')).toEqual([])
+    socket.event({ type: 'error', error: { event_id: 'unknown', message: 'Authentication failed' } })
+    expect(events.filter(event => event.type === 'error')).toHaveLength(1)
+    provider.close()
+  })
+
   it('configures the fast VAD profile and semantic Function Calling tools', async () => {
     const socket = new FakeSocket()
     const selected = new Config({})
