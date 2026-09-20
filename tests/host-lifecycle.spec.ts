@@ -52,4 +52,65 @@ describe('Host plugin lifecycle', () => {
     expect(unregister).toHaveBeenCalledTimes(2)
     expect(unregisterStatus).toHaveBeenCalledTimes(3)
   })
+
+  it('serves the call-back inbox over loopback only, and dismisses by id', async () => {
+    const handlers = new Map<string, (request: unknown, response: unknown) => void>()
+    const context = {
+      webServer: {
+        register: vi.fn((entry: { path: string; handler: (request: unknown, response: unknown) => void }) => {
+          handlers.set(entry.path, entry.handler)
+          return vi.fn()
+        }),
+        registerUpgrade: vi.fn(() => vi.fn()),
+      },
+      effect: vi.fn((factory: () => () => void | Promise<void>) => { factory() }),
+      inject: vi.fn(),
+    }
+    apply(context as never, config)
+    const handler = handlers.get(VOICE_INBOX_ROUTE)
+    expect(handler).toBeTypeOf('function')
+
+    const remote = respond()
+    handler?.({ method: 'GET', socket: { remoteAddress: '10.0.0.9' }, headers: {} }, remote.response)
+    expect(remote.status).toBe(403)
+
+    const loopback = respond()
+    handler?.({ method: 'GET', socket: { remoteAddress: '127.0.0.1' }, headers: {}, url: VOICE_INBOX_ROUTE }, loopback.response)
+    expect(loopback.status).toBe(200)
+    expect(JSON.parse(loopback.body)).toMatchObject({ protocol: 'dsh.voice.v1', entries: [] })
+
+    const wrongMethod = respond()
+    handler?.({ method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: {} }, wrongMethod.response)
+    expect(wrongMethod.status).toBe(405)
+  })
+
+  it('registers the built-in reporting skill once the skills service is injected', () => {
+    const register = vi.fn(() => vi.fn())
+    const injections = new Map<string, (ctx: unknown) => void>()
+    const context = {
+      webServer: { register: vi.fn(() => vi.fn()), registerUpgrade: vi.fn(() => vi.fn()) },
+      effect: vi.fn((factory: () => () => void | Promise<void>) => { factory() }),
+      inject: vi.fn((services: string[], callback: (ctx: unknown) => void) => {
+        for (const service of services) injections.set(service, callback)
+      }),
+    }
+    apply(context as never, config)
+
+    const skills = injections.get('skills')
+    expect(skills).toBeTypeOf('function')
+    skills?.({ skills: { register }, effect: (factory: () => () => void) => { factory() }, logger: { warn: vi.fn() } })
+    expect(register).toHaveBeenCalledWith(expect.objectContaining({ name: 'dsh-voice-supervisor' }))
+  })
 })
+
+function respond() {
+  const state = { status: 0, body: '' }
+  return {
+    get status() { return state.status },
+    get body() { return state.body },
+    response: {
+      writeHead(status: number) { state.status = status },
+      end(chunk?: string) { state.body = chunk ?? '' },
+    },
+  }
+}

@@ -102,7 +102,7 @@ Host 中转协议详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，客户端直连�
 
 ## 已验证
 
-- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 29 个测试文件 184 个用例全绿
+- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 29 个测试文件 190 个用例全绿
 - DSH `0.1.0-rc.7` 官方 CLI 本地安装、卸载、重新安装
 - 原生 3080 WebUI 插槽：安装后按钮 1 个，卸载后 0 个，重装后恢复
 - 真实 WebUI 插件配置卡：Flash/Plus 即时持久化切换；系统 Key 状态检测和 write-only 输入框正常挂载

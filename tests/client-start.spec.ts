@@ -5,6 +5,60 @@ import { VOICE_PROTOCOL } from '../src/protocol.ts'
 describe('browser voice start arbitration', () => {
   afterEach(() => vi.unstubAllGlobals())
 
+  it('loads the call-back list on the presence cadence and keeps selection order', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      if (String(input).endsWith('/status')) return occupancyResponse(false)
+      return {
+        ok: true,
+        json: async () => ({
+          protocol: 'dsh.voice.v1',
+          entries: [
+            { id: 'inbox-1', delivered: false },
+            { id: 'inbox-2', delivered: false },
+          ],
+        }),
+      }
+    }))
+    const controller = new VoiceCallController()
+    const refreshPresence = (controller as unknown as { refreshPresence(): Promise<unknown> }).refreshPresence.bind(controller)
+    await refreshPresence()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().inbox.map(entry => entry.id)).toEqual(['inbox-1', 'inbox-2'])
+
+    controller.toggleInboxSelection('inbox-2')
+    controller.toggleInboxSelection('inbox-1')
+    expect(controller.getSnapshot().inboxSelection).toEqual(['inbox-2', 'inbox-1'])
+    controller.toggleInboxSelection('inbox-2')
+    expect(controller.getSnapshot().inboxSelection).toEqual(['inbox-1'])
+    controller.clearInboxSelection()
+    expect(controller.getSnapshot().inboxSelection).toEqual([])
+    await controller.dispose()
+  })
+
+  it('drops a stale selection when its entry is no longer in the inbox', async () => {
+    let entries = [
+      { id: 'inbox-1', delivered: false },
+      { id: 'inbox-2', delivered: false },
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      if (String(input).endsWith('/status')) return occupancyResponse(false)
+      return { ok: true, json: async () => ({ protocol: 'dsh.voice.v1', entries }) }
+    }))
+    const controller = new VoiceCallController()
+    const refreshPresence = (controller as unknown as { refreshPresence(): Promise<unknown> }).refreshPresence.bind(controller)
+    await refreshPresence()
+    await Promise.resolve()
+    await Promise.resolve()
+    controller.toggleInboxSelection('inbox-2')
+    entries = [{ id: 'inbox-1', delivered: false }]
+    await refreshPresence()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().inboxSelection).toEqual([])
+    await controller.dispose()
+  })
+
   it('claims the local start slot before the asynchronous occupancy preflight', async () => {
     let resolveFetch!: (value: unknown) => void
     const fetchPromise = new Promise(resolve => { resolveFetch = resolve })
