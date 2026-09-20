@@ -28,8 +28,10 @@ export declare class DshBackendBridge {
     private dshTurnRunning;
     private activeDshJobs;
     private started;
+    private stopped;
     private readonly retryTimers;
     private readonly progressGate;
+    private readonly progressCoalescer;
     constructor(ctx: Context, sessionId: string, coordinator: DshVoiceCoordinator, callbacks: DshBackendBridgeCallbacks, config: VoiceConfig);
     setCallbacks(callbacks: DshBackendBridgeCallbacks): void;
     start(): Promise<void>;

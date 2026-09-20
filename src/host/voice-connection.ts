@@ -38,10 +38,25 @@ import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts'
 import { DshFunctionBridge } from './dsh-function-bridge.ts'
 import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.ts'
 import { ProgressAnnouncementGate } from './progress-gate.ts'
+import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
 const BROWSER_AUDIO_SEND_TIMEOUT_MS = 15_000
+
+/**
+ * DSH repeats the final answer on the `turn/end` that follows its
+ * `assistant/message` (measured 2ms apart), so a stage update waits briefly
+ * before it speaks and yields to an identical terminal report.
+ */
+const PROGRESS_COALESCE_HOLD_MS = 400
+
+interface VoiceAnnouncementEntry {
+  id: string
+  text: string
+  body: string
+  kind: 'status' | 'complete'
+}
 
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export class VoiceConnection {
@@ -87,6 +102,7 @@ export class VoiceConnection {
   private hostEventsAbort: AbortController | undefined
   private readonly pendingAssistantByTurn = new Map<string, string>()
   private readonly progressGate: ProgressAnnouncementGate
+  private readonly progressCoalescer: ProgressAnnouncementCoalescer<VoiceAnnouncementEntry>
 
   constructor(
     private readonly ctx: Context,
@@ -100,6 +116,20 @@ export class VoiceConnection {
       mode: config.progressReporting,
       minIntervalMs: config.progressMinIntervalMs,
       quietTaskMs: config.progressQuietTaskMs,
+    })
+    this.progressCoalescer = new ProgressAnnouncementCoalescer<VoiceAnnouncementEntry>({
+      holdMs: PROGRESS_COALESCE_HOLD_MS,
+      // This runs from a timer, so it must never throw into the event loop: a
+      // transport that tore down between offer and flush would otherwise crash
+      // the host with an uncaught exception.
+      emit: entry => {
+        if (this.closed) return
+        try {
+          this.provider?.announceBackendEvent(entry.id, entry.text)
+        } catch (error) {
+          this.ctx.logger.warn(`[realtime-voice] dropped a queued progress announcement: ${String(error)}`)
+        }
+      },
     })
     this.helloTimer = setTimeout(() => this.fail('hello-timeout', '客户端未及时发送 voice.hello。', false), 10_000)
     socket.on('message', (data, isBinary) => {
@@ -127,6 +157,7 @@ export class VoiceConnection {
     clearTimeout(this.helloTimer)
     if (this.playbackDrainFallbackTimer !== undefined) clearTimeout(this.playbackDrainFallbackTimer)
     this.hostEventsAbort?.abort()
+    this.progressCoalescer.dispose()
     this.coordinator = undefined
     this.provider?.close()
     this.provider = undefined
@@ -617,10 +648,12 @@ export class VoiceConnection {
             // gate's surviving key nodes become speech; the browser UI still
             // receives every summary above.
             if (this.progressGate.decide()) {
-              this.provider?.announceBackendEvent(
-                `backend_progress_${event.seq}`,
-                `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
-              )
+              this.progressCoalescer.offer({
+                id: `backend_progress_${event.seq}`,
+                text: `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
+                body: text,
+                kind: 'status',
+              })
             }
           }
           continue
@@ -659,10 +692,12 @@ export class VoiceConnection {
         })
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
-        this.provider?.announceBackendEvent(
-          `backend_complete_${event.seq}`,
-          `${completionTag} ${resultText}\n这是绑定 DSH 任务的权威终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
-        )
+        this.progressCoalescer.settle({
+          id: `backend_complete_${event.seq}`,
+          text: `${completionTag} ${resultText}\n这是绑定 DSH 任务的权威终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
+          body: resultText,
+          kind: 'complete',
+        })
       }
     })().catch((error: unknown) => {
       if (!abort.signal.aborted) this.ctx.logger.warn(error)

@@ -10,6 +10,17 @@ import {
 import { assistantText, DshVoiceSession } from './dsh-session-state.ts'
 import type { VoiceConfig } from './config.ts'
 import { ProgressAnnouncementGate } from './progress-gate.ts'
+import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
+
+/** DSH repeats the final answer on the follow-up `turn/end`; see the WebUI path. */
+const PROGRESS_COALESCE_HOLD_MS = 400
+
+interface BridgeAnnouncementEntry {
+  id: string
+  text: string
+  body: string
+  kind: DirectBackendEventKind
+}
 
 export interface DshBackendEvent {
   eventId: string
@@ -32,8 +43,10 @@ export class DshBackendBridge {
   private dshTurnRunning = false
   private activeDshJobs = 0
   private started = false
+  private stopped = false
   private readonly retryTimers = new Map<'host' | 'mux', ReturnType<typeof setTimeout>>()
   private readonly progressGate: ProgressAnnouncementGate
+  private readonly progressCoalescer: ProgressAnnouncementCoalescer<BridgeAnnouncementEntry>
 
   constructor(
     private readonly ctx: Context,
@@ -47,6 +60,13 @@ export class DshBackendBridge {
       mode: config.progressReporting,
       minIntervalMs: config.progressMinIntervalMs,
       quietTaskMs: config.progressQuietTaskMs,
+    })
+    this.progressCoalescer = new ProgressAnnouncementCoalescer<BridgeAnnouncementEntry>({
+      holdMs: PROGRESS_COALESCE_HOLD_MS,
+      emit: entry => {
+        if (this.stopped) return
+        this.callbacks.onBackendEvent({ eventId: entry.id, kind: entry.kind, text: entry.text })
+      },
     })
   }
 
@@ -67,7 +87,9 @@ export class DshBackendBridge {
   }
 
   stop(): void {
+    this.stopped = true
     this.abort.abort()
+    this.progressCoalescer.dispose()
     for (const timer of this.retryTimers.values()) clearTimeout(timer)
     this.retryTimers.clear()
   }
@@ -203,10 +225,11 @@ export class DshBackendBridge {
         // Direct media clients get the same convergence as the WebUI path:
         // a stage update becomes speech only when the gate lets it through.
         if (this.progressGate.decide()) {
-          this.callbacks.onBackendEvent({
-            eventId: `dsh:${this.sessionId}:event:${String(event.seq ?? turn)}:status`,
-            kind: 'status',
+          this.progressCoalescer.offer({
+            id: `dsh:${this.sessionId}:event:${String(event.seq ?? turn)}:status`,
             text: `[BACKEND][STATUS] ${text}\n这是执行中的阶段更新，不是最终完成。`,
+            body: text,
+            kind: 'status',
           })
         }
       }
@@ -225,10 +248,12 @@ export class DshBackendBridge {
     this.emitAgentStatus(text?.slice(0, 1_200))
     const kind = reason === 'completed' ? 'complete' : reason
     const tag = reason === 'completed' ? 'COMPLETE' : reason === 'cancelled' ? 'CANCELLED' : 'FAILED'
-    this.callbacks.onBackendEvent({
-      eventId: `dsh:${this.sessionId}:event:${String(event.seq ?? data.turn)}:terminal:${reason}`,
+    const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
+    this.progressCoalescer.settle({
+      id: `dsh:${this.sessionId}:event:${String(event.seq ?? data.turn)}:terminal:${reason}`,
+      text: `[BACKEND][${tag}] ${resultText}\n这是绑定任务的权威终态。`,
+      body: resultText,
       kind,
-      text: `[BACKEND][${tag}] ${text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`}\n这是绑定任务的权威终态。`,
     })
   }
 
