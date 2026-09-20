@@ -1,5 +1,6 @@
 /** DSH Host half: same-process realtime voice route, provider bridge, and complete disposal. */
 import type { Duplex } from 'node:stream'
+import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -48,7 +49,10 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   // skill bundle, and Cordis throws when a non-injected service is read. The
   // injection below fills this holder only once the service actually exists,
   // so guidance resolution can stay a plain, testable function.
-  const guidanceRuntime: HandoffGuidanceRuntime = { logger: ctx.logger }
+  const guidanceRuntime: HandoffGuidanceRuntime = {
+    logger: ctx.logger,
+    readFile: async (path: string) => await readFile(path, 'utf8'),
+  }
   ctx.inject(['skills'], (skillsCtx) => {
     const registry = (skillsCtx as unknown as { skills?: HandoffGuidanceRuntime['skills'] }).skills
     if (registry !== undefined) guidanceRuntime.skills = registry

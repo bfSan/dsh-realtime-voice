@@ -20,6 +20,8 @@ export interface VoiceSnapshot {
     inbox: readonly VoiceInboxEntry[];
     /** IDs the user checked in the call-back list, in selection order. */
     inboxSelection: readonly string[];
+    /** IDs the user deferred: still listed, but no longer ringing. */
+    snoozedInbox: readonly string[];
     error?: string | undefined;
 }
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
@@ -50,6 +52,16 @@ export declare class VoiceCallController implements HostObservable<VoiceSnapshot
     toggleInboxSelection(entryId: string): void;
     selectAllInbox(): void;
     clearInboxSelection(): void;
+    /**
+     * Stop ringing for one report while leaving it in the list.
+     *
+     * Snooze stays local on purpose: the Host's `delivered` flag means "already
+     * spoken", and a snoozed report has not been spoken, so pushing it to the
+     * Host would lose the task rather than defer it.
+     */
+    snoozeInbox(entryId: string): void;
+    /** Take one report immediately, ignoring whatever else is selected. */
+    answerInboxOne(entryId: string): Promise<void>;
     /**
      * Ring back: take the call up against the selected task's own session and
      * ask the Host to speak those results in selection order.

@@ -43,6 +43,8 @@ export interface VoiceSnapshot {
   inbox: readonly VoiceInboxEntry[]
   /** IDs the user checked in the call-back list, in selection order. */
   inboxSelection: readonly string[]
+  /** IDs the user deferred: still listed, but no longer ringing. */
+  snoozedInbox: readonly string[]
   error?: string | undefined
 }
 
@@ -55,6 +57,7 @@ const INITIAL_SNAPSHOT: VoiceSnapshot = {
   elapsedSeconds: 0,
   inbox: [],
   inboxSelection: [],
+  snoozedInbox: [],
 }
 
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
@@ -116,6 +119,37 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   }
 
   /**
+   * Stop ringing for one report while leaving it in the list.
+   *
+   * Snooze stays local on purpose: the Host's `delivered` flag means "already
+   * spoken", and a snoozed report has not been spoken, so pushing it to the
+   * Host would lose the task rather than defer it.
+   */
+  snoozeInbox(entryId: string): void {
+    this.update({
+      ...this.snapshot,
+      inboxSelection: this.snapshot.inboxSelection.filter(id => id !== entryId),
+      snoozedInbox: this.snapshot.snoozedInbox.includes(entryId)
+        ? this.snapshot.snoozedInbox
+        : [...this.snapshot.snoozedInbox, entryId],
+    })
+  }
+
+  /** Take one report immediately, ignoring whatever else is selected. */
+  async answerInboxOne(entryId: string): Promise<void> {
+    const entry = this.snapshot.inbox.find(candidate => candidate.id === entryId)
+    if (entry === undefined) return
+    await this.start(entry.sessionId)
+    if (this.snapshot.phase === 'listening' || this.snapshot.phase === 'agent-working') {
+      this.sendControl({ type: 'voice.inbox-deliver', entryIds: [entryId] })
+      this.update({
+        ...this.snapshot,
+        inboxSelection: this.snapshot.inboxSelection.filter(id => id !== entryId),
+      })
+    }
+  }
+
+  /**
    * Ring back: take the call up against the selected task's own session and
    * ask the Host to speak those results in selection order.
    */
@@ -138,11 +172,12 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   dismissInbox(entryIds: readonly string[]): void {
     if (entryIds.length === 0) return
     void this.deleteInbox(entryIds)
-    this.update({
-      ...this.snapshot,
-      inbox: this.snapshot.inbox.filter(entry => !entryIds.includes(entry.id)),
-      inboxSelection: this.snapshot.inboxSelection.filter(id => !entryIds.includes(id)),
-    })
+      this.update({
+        ...this.snapshot,
+        inbox: this.snapshot.inbox.filter(entry => !entryIds.includes(entry.id)),
+        inboxSelection: this.snapshot.inboxSelection.filter(id => !entryIds.includes(id)),
+        snoozedInbox: this.snapshot.snoozedInbox.filter(id => !entryIds.includes(id)),
+      })
   }
 
   private async deleteInbox(entryIds: readonly string[]): Promise<void> {
@@ -603,6 +638,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         ...this.snapshot,
         inbox: snapshot.entries,
         inboxSelection: this.snapshot.inboxSelection.filter(id => live.has(id)),
+        snoozedInbox: this.snapshot.snoozedInbox.filter(id => live.has(id)),
       })
     } catch {
       return

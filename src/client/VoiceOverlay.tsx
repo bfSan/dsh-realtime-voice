@@ -5,7 +5,8 @@ import { realtimeVoiceModelLabel, realtimeVoiceTurnDetectionLabel } from '../mod
 import type { VoiceQuestionAnswer } from '../protocol.ts'
 import type { VoiceInboxEntry } from '../protocol.ts'
 import type { VoiceSnapshot } from './controller.ts'
-import { playRingtone, RINGTONE_DURATION_MS } from './ringtone.ts'
+import type { VoiceModelSettingsSnapshot } from './model-settings.ts'
+import { playRingtone } from './ringtone.ts'
 import {
   clampFloatingPosition,
   defaultFloatingPosition,
@@ -15,13 +16,19 @@ import {
 import styles from './voice.module.css'
 
 export interface VoiceOverlayInjected {
-  hooks: { voice: HostObservable<VoiceSnapshot> }
+  hooks: {
+    voice: HostObservable<VoiceSnapshot>
+    /** Ring length comes from the Host setting so it stays one source of truth. */
+    voiceModelSettings: HostObservable<VoiceModelSettingsSnapshot>
+  }
   end: () => void
   toggleMute: () => void
   cancelResponse: () => void
   answerApproval: (approvalId: string, outcome: 'allowed-once' | 'rejected') => void
   answerQuestion: (requestId: string, answers: VoiceQuestionAnswer[]) => void
   answerInbox: (sessionId?: string) => void
+  answerInboxOne: (entryId: string) => void
+  snoozeInbox: (entryId: string) => void
   toggleInboxSelection: (entryId: string) => void
   selectAllInbox: () => void
   clearInboxSelection: () => void
@@ -36,9 +43,18 @@ interface DragState {
   origin: FloatingPosition
 }
 
+/**
+ * The floating panel is a drag surface, so anything focusable or scrollable
+ * inside it must be excluded from the drag gesture. Exempting only `button`
+ * left checkboxes, links and selects dead: the drag handler cancels their
+ * default behavior and captures the pointer before they can react.
+ */
+const INTERACTIVE_SELECTOR = 'button, input, textarea, select, a[href], [role="button"], [role="checkbox"]'
+
 /** Root-level movable call surface that remains visible while the user changes DSH sessions. */
 export function VoiceOverlay({
   useVoice,
+  useVoiceModelSettings,
   useSessions,
   end,
   toggleMute,
@@ -46,6 +62,8 @@ export function VoiceOverlay({
   answerApproval,
   answerQuestion,
   answerInbox,
+  answerInboxOne,
+  snoozeInbox,
   toggleInboxSelection,
   selectAllInbox,
   clearInboxSelection,
@@ -53,6 +71,7 @@ export function VoiceOverlay({
   openSession,
 }: VoiceOverlayProps) {
   const voice = useVoice(snapshot => snapshot)
+  const ringDurationMs = useVoiceModelSettings(snapshot => snapshot.ringDurationMs)
   const [collapsed, setCollapsed] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [position, setPosition] = useState<FloatingPosition>()
@@ -67,24 +86,32 @@ export function VoiceOverlay({
   const viewingOtherSession = voice.sessionId !== undefined && currentSessionId !== voice.sessionId
   // A snapshot from an older Host has no inbox field; treat it as empty.
   const waiting = (voice.inbox ?? []).filter(entry => !entry.delivered)
+  const snoozed = voice.snoozedInbox ?? []
   const rungRef = useRef<Set<string>>(new Set())
-  const newWaitingIds = waiting.map(entry => entry.id).filter(id => !rungRef.current.has(id))
+  // A snoozed report stays listed but must not ring again when the list
+  // re-renders, so it counts as already offered.
+  const newWaitingIds = waiting
+    .map(entry => entry.id)
+    .filter(id => !rungRef.current.has(id) && !snoozed.includes(id))
 
   useEffect(() => {
     if (voice.phase !== 'idle' || newWaitingIds.length === 0) return
     for (const id of newWaitingIds) rungRef.current.add(id)
-    const stop = playRingtone()
+    const stop = playRingtone(ringDurationMs)
     if (stop === undefined) return
-    // The bell is deliberately short: after five seconds the call falls back
-    // to "稍后再接" and the task simply stays in the list.
-    const timer = setTimeout(stop, RINGTONE_DURATION_MS)
+    // When the bell stops, the call falls back to "稍后"; the task stays in
+    // the list either way, so a missed ring never loses a report.
+    const timer = setTimeout(stop, ringDurationMs)
     return () => {
       clearTimeout(timer)
       stop()
     }
     // Only the arrival of a new report may ring: dismissing one row, or
     // finishing a call, must not restart the bell for rows already offered.
-  }, [newWaitingIds.join(','), voice.phase])
+    // Snooze is an explicit local deferral: it must not be re-armed by a
+    // later render, so the dependency list deliberately omits `snoozed`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newWaitingIds.join(','), voice.phase, ringDurationMs])
 
   useEffect(() => {
     if (voice.phase === 'requesting-permission') setCollapsed(false)
@@ -122,7 +149,10 @@ export function VoiceOverlay({
 
   const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || panelRef.current === null) return
-    if (!collapsed && (event.target as Element).closest('button') !== null) return
+    // Any interactive control owns its own pointer: exempting only `button`
+    // silently ate checkbox clicks, because `preventDefault()` below cancels
+    // the default toggle and `setPointerCapture` then steals the gesture.
+    if (!collapsed && (event.target as Element).closest(INTERACTIVE_SELECTOR) !== null) return
     const rect = panelRef.current.getBoundingClientRect()
     dragRef.current = {
       pointerId: event.pointerId,
@@ -186,6 +216,8 @@ export function VoiceOverlay({
           onClearSelection={clearInboxSelection}
           onDismiss={dismissInbox}
           onAnswer={() => answerInbox()}
+          onAnswerOne={answerInboxOne}
+          onSnooze={snoozeInbox}
         />
       </section>
     )
@@ -409,6 +441,10 @@ function CallBackList(props: {
   onClearSelection: () => void
   onDismiss: (entryIds: string[]) => void
   onAnswer: () => void
+  /** Take one task's report straight away, without touching the selection. */
+  onAnswerOne: (entryId: string) => void
+  /** Stop the ring for this report but keep it in the list. */
+  onSnooze: (entryId: string) => void
 }) {
   const allSelected = props.selection.length === props.waiting.length && props.waiting.length > 0
   return (
@@ -434,14 +470,17 @@ function CallBackList(props: {
           const checked = props.selection.includes(entry.id)
           return (
             <li className={styles.incomingRow} key={entry.id}>
-              <label className={styles.incomingLabel}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => props.onToggle(entry.id)}
-                />
+              <div className={styles.incomingLabel}>
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={checked}
+                  aria-label={`选中「${entry.sessionTitle ?? entry.request.slice(0, 40)}」`}
+                  className={`${styles.rowCheck} ${checked ? styles.rowCheckOn : ''}`}
+                  onClick={() => props.onToggle(entry.id)}
+                >{checked ? '✓' : ''}</button>
                 <span className={styles.incomingTitle}>{entry.sessionTitle ?? entry.request.slice(0, 40)}</span>
-              </label>
+              </div>
               <div className={styles.incomingMeta}>
                 <span className={styles.incomingStatus} data-status={entry.status}>{inboxStatusText(entry.status)}</span>
                 <span>{entry.sessionTitle === undefined ? entry.request.slice(0, 60) : entry.request.slice(0, 40)}</span>
@@ -450,9 +489,11 @@ function CallBackList(props: {
                 <span className={styles.incomingTime}>{inboxAgeText(entry.createdAt)} · {inboxDurationText(entry.durationMs)}</span>
                 <button
                   type="button"
-                  className={styles.linkButton}
-                  onClick={() => props.onDismiss([entry.id])}
-                >已读</button>
+                  className={styles.rowAnswer}
+                  onClick={() => props.onAnswerOne(entry.id)}
+                >接听</button>
+                <button type="button" className={styles.rowAction} onClick={() => props.onDismiss([entry.id])}>已读</button>
+                <button type="button" className={styles.rowAction} onClick={() => props.onSnooze(entry.id)}>稍后</button>
               </div>
             </li>
           )
@@ -476,7 +517,7 @@ function CallBackList(props: {
           {props.selection.length > 1 ? `接听并汇报 ${props.selection.length} 条` : '接听'}
         </button>
         <div className={styles.incomingHint}>
-          5 秒后自动静音，任务会留在列表里；想稍后再听时再点接听。
+          点「稍后」只是收起当前选择，任务会留在列表里。响铃时长可在插件设置里调整。
         </div>
       </footer>
     </>

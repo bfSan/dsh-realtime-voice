@@ -68,6 +68,9 @@ export type RealtimeVoiceProgressReporting =
  */
 export const DEFAULT_HANDOFF_SKILL_NAME = 'dsh-voice-supervisor'
 
+/** Default ring length for an incoming report, in milliseconds. */
+export const DEFAULT_RING_DURATION_MS = 5_000
+
 export const DEFAULT_REALTIME_VOICE_MODEL: RealtimeVoiceModel = REALTIME_VOICE_MODELS.plus
 export const DEFAULT_REALTIME_VOICE_TURN_DETECTION: RealtimeVoiceTurnDetection = REALTIME_VOICE_TURN_DETECTION.fast
 export const DEFAULT_REALTIME_VOICE_VOICE: RealtimeVoiceVoice = 'longanqian'

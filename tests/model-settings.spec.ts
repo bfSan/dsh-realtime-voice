@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Config } from '../src/host/config.ts'
 import {
-  DEFAULT_HANDOFF_SKILL_NAME,
   DEFAULT_REALTIME_VOICE_VOICE,
   isRealtimeVoiceVoice,
   REALTIME_VOICE_MODELS,
@@ -218,10 +217,7 @@ describe('realtime voice model settings', () => {
       remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
     } as never)
 
-    expect(controller.getSnapshot()).toMatchObject({
-      handoffSkill: DEFAULT_HANDOFF_SKILL_NAME,
-      handoffInstructions: '',
-    })
+    expect(controller.getSnapshot()).toMatchObject({ handoffSkill: '', handoffInstructions: '' })
 
     await controller.setHandoffSkill('  voice-supervisor  ')
     expect(scope.set).toHaveBeenCalledWith('handoffSkill', 'voice-supervisor')
@@ -244,10 +240,71 @@ describe('realtime voice model settings', () => {
       remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
     } as never)
 
-    await controller.setHandoffSkill('a'.repeat(200))
+    // A bare 200-char slug is a legal skill name now, so the rejection cases
+    // are: over the field's own limit, and a value that is neither a skill
+    // name nor a path.
+    await controller.setHandoffSkill('a'.repeat(513))
+    await controller.setHandoffSkill('my skill')
     await controller.setHandoffInstructions('b'.repeat(8_001))
     expect(scope.set).not.toHaveBeenCalled()
     controller.dispose()
+  })
+
+  it('persists the ring duration and clamps it to a usable range', async () => {
+    let snapshot = ready(REALTIME_VOICE_MODELS.plus)
+    const listeners = new Set<() => void>()
+    const scope = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: vi.fn(async (field: string, value: unknown) => {
+        snapshot = ready(snapshot.value!.model, snapshot.value!.turnDetection, {
+          ...snapshot.value,
+          [field]: value,
+        } as VoiceModelSettingsValue)
+        for (const listener of listeners) listener()
+      }),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    const controller = new VoiceModelSettingsController(scope, {
+      remote: { credentials: { describe: vi.fn(async () => ({ ok: true, value: {} })) } },
+    } as never)
+
+    expect(controller.getSnapshot().ringDurationMs).toBe(5_000)
+
+    await controller.setRingDuration(8_000)
+    expect(scope.set).toHaveBeenCalledWith('ringDurationMs', 8_000)
+    expect(controller.getSnapshot().ringDurationMs).toBe(8_000)
+
+    // Zero means "never ring": the report still lands in the list.
+    await controller.setRingDuration(0)
+    expect(controller.getSnapshot().ringDurationMs).toBe(0)
+
+    await controller.setRingDuration(60_001)
+    await controller.setRingDuration(-1)
+    await controller.setRingDuration(Number.NaN)
+    expect(scope.set).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
+  it('rejects a malformed ring duration in a remote snapshot', () => {
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      ringDurationMs: 7_500,
+    })).toMatchObject({ ringDurationMs: 7_500 })
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      ringDurationMs: -1,
+    })).toBeUndefined()
+    expect(decodeVoiceModelSettings({
+      model: REALTIME_VOICE_MODELS.flash,
+      turnDetection: REALTIME_VOICE_TURN_DETECTION.fast,
+      ringDurationMs: 60_001,
+    })).toBeUndefined()
   })
 
   it('exposes the realtime voice, VAD and history tunables the service accepts', async () => {

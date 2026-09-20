@@ -16,6 +16,7 @@ export interface VoiceModelSettingsValue {
     progressQuietTaskMs?: number;
     handoffSkill?: string;
     handoffInstructions?: string;
+    ringDurationMs?: number;
     apiKeyEnv?: string;
 }
 export interface VoiceModelSettingsSnapshot {
@@ -34,6 +35,7 @@ export interface VoiceModelSettingsSnapshot {
     progressQuietTaskMs: number;
     handoffSkill: string;
     handoffInstructions: string;
+    ringDurationMs: number;
     saving: boolean;
     error: string | undefined;
     apiKeyRef: string;
@@ -72,6 +74,7 @@ export declare class VoiceModelSettingsController implements HostObservable<Voic
      */
     setHandoffSkill(handoffSkill: string): Promise<void>;
     setHandoffInstructions(handoffInstructions: string): Promise<void>;
+    setRingDuration(ringDurationMs: number): Promise<void>;
     /** One write path for the scalar settings that only need a value round-trip. */
     private writeSetting;
     /** Write through DSH's write-only credential seam; the literal is never stored in this controller. */

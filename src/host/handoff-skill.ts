@@ -57,6 +57,13 @@ export interface HandoffSkillDefinition {
   name: string
   description: string
   content: string
+  /**
+   * Required by the registry's load-time revalidation. `ctx.skills.register()`
+   * defaults only `invocation` and `provider`, so omitting this registers
+   * cleanly and then throws "loaded skill ... source must be a string" the
+   * first time a handoff tries to read the body.
+   */
+  source: string
   whenToUse?: string
 }
 
@@ -74,6 +81,9 @@ export function defaultHandoffSkill(options: DefaultHandoffSkillOptions = {}): H
     name: options.name ?? DEFAULT_HANDOFF_SKILL_NAME,
     description: DEFAULT_HANDOFF_SKILL_DESCRIPTION,
     content: options.content ?? DEFAULT_HANDOFF_SKILL_CONTENT,
+    // Matches the registry's own `RUNTIME_PROVIDER`, i.e. the label it would
+    // have applied itself if `register()` defaulted this field.
+    source: 'runtime',
     whenToUse: '在执行 Agent 通过实时语音向用户汇报进展、提问或交付结果时使用。',
   }
 }

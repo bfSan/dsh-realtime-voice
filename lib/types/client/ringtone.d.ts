@@ -6,10 +6,12 @@
  * before audio may start, so a blocked context is a normal, silent outcome:
  * the list is still visible and the user can take the call manually.
  */
+/** Default ring length; the Host setting overrides it. Zero never rings. */
 export declare const RINGTONE_DURATION_MS = 5000;
 /**
- * Play one five-second ring.
+ * Start a ring of the requested length.
  *
- * @returns a stop function, or undefined when the browser cannot play audio.
+ * @returns a stop function, or undefined when the browser cannot play audio
+ *   or the configured duration is zero.
  */
-export declare function playRingtone(): (() => void) | undefined;
+export declare function playRingtone(durationMs?: number): (() => void) | undefined;

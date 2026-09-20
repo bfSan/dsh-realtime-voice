@@ -32,6 +32,8 @@ export type RealtimeVoiceProgressReporting = typeof REALTIME_VOICE_PROGRESS_REPO
  * settings card so both surfaces agree on one value.
  */
 export declare const DEFAULT_HANDOFF_SKILL_NAME = "dsh-voice-supervisor";
+/** Default ring length for an incoming report, in milliseconds. */
+export declare const DEFAULT_RING_DURATION_MS = 5000;
 export declare const DEFAULT_REALTIME_VOICE_MODEL: RealtimeVoiceModel;
 export declare const DEFAULT_REALTIME_VOICE_TURN_DETECTION: RealtimeVoiceTurnDetection;
 export declare const DEFAULT_REALTIME_VOICE_VOICE: RealtimeVoiceVoice;

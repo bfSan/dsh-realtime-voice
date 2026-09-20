@@ -69,11 +69,13 @@ export function apply(ctx: Context): void {
     id: 'realtime-voice',
     order: 100,
     inject: (): VoiceOverlayInjected => ({
-      hooks: { voice },
+      hooks: { voice, voiceModelSettings: modelSettings },
       end: () => voice.end(),
       toggleMute: () => voice.toggleMute(),
       cancelResponse: () => voice.cancelResponse(),
       answerInbox: (sessionId?: string) => { void voice.answerInbox(sessionId) },
+      answerInboxOne: (entryId: string) => { void voice.answerInboxOne(entryId) },
+      snoozeInbox: (entryId: string) => voice.snoozeInbox(entryId),
       toggleInboxSelection: (entryId: string) => voice.toggleInboxSelection(entryId),
       selectAllInbox: () => voice.selectAllInbox(),
       clearInboxSelection: () => voice.clearInboxSelection(),
@@ -97,7 +99,7 @@ export function apply(ctx: Context): void {
     key: REALTIME_VOICE_SETTINGS_NAMESPACE,
     priority: 30,
     inject: (): VoiceSettingsCardInjected => ({
-      hooks: { voiceModelSettings: modelSettings },
+    hooks: { voiceModelSettings: modelSettings },
       selectModel: (model: RealtimeVoiceModel) => { void modelSettings.select(model) },
       selectTurnDetection: (mode: RealtimeVoiceTurnDetection) => { void modelSettings.selectTurnDetection(mode) },
       selectVoice: (voice: RealtimeVoiceVoice) => { void modelSettings.selectVoice(voice) },
@@ -111,6 +113,7 @@ export function apply(ctx: Context): void {
       setProgressQuietTask: (value: number) => { void modelSettings.setProgressQuietTask(value) },
       setHandoffSkill: (value: string) => { void modelSettings.setHandoffSkill(value) },
       setHandoffInstructions: (value: string) => { void modelSettings.setHandoffInstructions(value) },
+      setRingDuration: (value: number) => { void modelSettings.setRingDuration(value) },
       saveApiKey: (value: string) => modelSettings.saveApiKey(value),
     }),
   }, VoiceSettingsCard))

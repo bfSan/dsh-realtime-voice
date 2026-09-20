@@ -30,7 +30,24 @@ export interface SkillRegistryLike {
  */
 export interface HandoffGuidanceRuntime {
   skills?: SkillRegistryLike
+  /**
+   * Reads a guidance markdown file. Injected so the resolver stays testable
+   * and so a deployment without filesystem access can still use skill names.
+   */
+  readFile?: (path: string) => Promise<string>
   logger?: { warn?: (message: string) => void }
+}
+
+/**
+ * Whether the configured value should be read from disk instead of the skill
+ * registry. A DSH skill name is kebab-case and cannot contain a separator, a
+ * dot, or a drive letter, so any of those means "this is a path".
+ */
+export function looksLikeGuidancePath(value: string): boolean {
+  return value.includes('/')
+    || value.includes('\\')
+    || value.includes('.')
+    || value.startsWith('~')
 }
 
 /**
@@ -49,7 +66,7 @@ export async function resolveHandoffGuidance(
 ): Promise<HandoffGuidance> {
   const skillName = config.handoffSkill.trim()
   const inline = config.handoffInstructions.trim()
-  const skillBody = skillName === '' ? undefined : await loadSkillBody(runtime, skillName, options)
+  const skillBody = skillName === '' ? undefined : await loadGuidanceBody(runtime, skillName, options)
   const sections = [skillBody, inline === '' ? undefined : inline].filter(
     (value): value is string => value !== undefined && value.trim() !== '',
   )
@@ -60,6 +77,56 @@ export async function resolveHandoffGuidance(
     body: sections.join('\n\n').slice(0, MAX_HANDOFF_GUIDANCE_LENGTH),
     ...(skillName === '' || skillBody !== undefined ? {} : { missingSkill: skillName }),
   }
+}
+
+async function loadGuidanceBody(
+  runtime: HandoffGuidanceRuntime,
+  configured: string,
+  options: HandoffGuidanceContext,
+): Promise<string | undefined> {
+  if (looksLikeGuidancePath(configured)) return await loadGuidanceFile(runtime, configured)
+  return await loadSkillBody(runtime, configured, options)
+}
+
+/** One guidance file, with YAML frontmatter removed: only prose reaches the Agent. */
+async function loadGuidanceFile(
+  runtime: HandoffGuidanceRuntime,
+  path: string,
+): Promise<string | undefined> {
+  const readFile = runtime.readFile
+  if (readFile === undefined) {
+    runtime.logger?.warn?.(`[realtime-voice] handoff guidance file "${path}" is configured but file reading is unavailable`)
+    return undefined
+  }
+  try {
+    const raw = await readFile(expandHome(path))
+    const body = stripFrontmatter(raw).trim()
+    if (body === '') {
+      runtime.logger?.warn?.(`[realtime-voice] handoff guidance file "${path}" is empty`)
+      return undefined
+    }
+    return body
+  } catch (error) {
+    runtime.logger?.warn?.(
+      `[realtime-voice] failed to read handoff guidance file "${path}": ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return undefined
+  }
+}
+
+function expandHome(path: string): string {
+  if (!path.startsWith('~')) return path
+  const home = process.env.HOME
+  return home === undefined || home === '' ? path : `${home}${path.slice(1)}`
+}
+
+/** A leading `---` block is skill metadata, not instructions. */
+function stripFrontmatter(value: string): string {
+  if (!value.startsWith('---')) return value
+  const end = value.indexOf('\n---', 3)
+  if (end === -1) return value
+  const after = value.indexOf('\n', end + 1)
+  return after === -1 ? '' : value.slice(after + 1)
 }
 
 async function loadSkillBody(

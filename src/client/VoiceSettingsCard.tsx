@@ -30,6 +30,7 @@ export interface VoiceSettingsCardInjected {
   setProgressQuietTask: (value: number) => void
   setHandoffSkill: (value: string) => void
   setHandoffInstructions: (value: string) => void
+  setRingDuration: (value: number) => void
   saveApiKey: (value: string) => Promise<boolean>
 }
 
@@ -52,6 +53,7 @@ export function VoiceSettingsCard({
   setProgressQuietTask,
   setHandoffSkill,
   setHandoffInstructions,
+  setRingDuration,
   saveApiKey,
 }: VoiceSettingsCardProps) {
   const state = useVoiceModelSettings(snapshot => snapshot)
@@ -250,8 +252,10 @@ export function VoiceSettingsCard({
             commit={value => setHandoffSkill(value)}
           />
           <p className={styles.settingsHint}>
-            填写 DSH 已安装的 Skill 名。每次把任务交给执行 Agent 时，这段 Skill 正文会随任务一起下发，
-            用来规定它怎么汇报进展、先看什么、怎么安排工作。留空表示不附加。
+            可留空。填 DSH Skill 名（如 <code>dsh-voice-supervisor</code>），或填一个 markdown 文件的绝对路径
+            （如 <code>~/my-skill/SKILL.md</code>，支持 <code>~</code>）。每次把任务交给执行 Agent 时，
+            这段正文会随任务一起下发，用来规定它怎么汇报进展、先看什么、怎么安排工作。
+            插件内置了 <code>dsh-voice-supervisor</code> 范本，但默认不启用；想用就填它的名字。
           </p>
           <HandoffInstructionsField
             value={state.handoffInstructions}
@@ -261,6 +265,21 @@ export function VoiceSettingsCard({
           <p className={styles.settingsHint}>
             临时补充的汇报要求，追加在 Skill 正文之后，适合这次不想改 Skill 的微调。
             它只影响汇报与规划，不覆盖你的指令、会话权限或工具结果。
+          </p>
+        </div>
+        <div className={styles.settingsSubsection}>
+          <div className={styles.settingsLabel}>回拨振铃</div>
+          <div className={styles.numberRow}>
+            <NumberField
+              label="响铃时长（0 表示不响）"
+              suffix="秒"
+              value={state.ringDurationMs}
+              disabled={disabled}
+              commit={value => setRingDuration(value)}
+            />
+          </div>
+          <p className={styles.settingsHint}>
+            任务完成后的来电提示音时长，最多 60 秒。无论响铃多久，任务都会留在回拨列表里，随时可以再接听。
           </p>
         </div>
         {state.error === undefined ? null : <p className={styles.settingsError} role="alert">{state.error}</p>}
@@ -391,15 +410,15 @@ function SkillNameField(props: {
   }
   return (
     <label className={styles.numberField}>
-      <span className={styles.numberFieldLabel}>汇报 Skill 名称（可留空）</span>
+      <span className={styles.numberFieldLabel}>汇报 Skill 名称或文件路径（可留空）</span>
       <span className={styles.numberFieldInput}>
         <input
           type="text"
           className={styles.numberInput}
           spellCheck={false}
           autoComplete="off"
-          maxLength={128}
-          placeholder="例如：dsh-voice-supervisor"
+          maxLength={512}
+          placeholder="dsh-voice-supervisor 或 ~/my-skill/SKILL.md"
           value={shown}
           disabled={props.disabled}
           onChange={event => setDraft(event.target.value)}

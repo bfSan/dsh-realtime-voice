@@ -20,6 +20,7 @@ describe('floating voice overlay', () => {
     }
     const html = renderToStaticMarkup(<VoiceOverlay {...({
       useVoice: (selector: (value: VoiceSnapshot) => unknown) => selector(voice),
+      useVoiceModelSettings: (selector: (value: unknown) => unknown) => selector({ ringDurationMs: 5_000 }),
       useSessions: (selector: (value: unknown) => unknown) => selector({
         current: 'session-one',
         byId: { 'session-one': { displayTitle: '绑定任务', blank: false } },
@@ -28,6 +29,8 @@ describe('floating voice overlay', () => {
       toggleMute: vi.fn(),
       cancelResponse: vi.fn(),
       answerInbox: vi.fn(),
+      answerInboxOne: vi.fn(),
+      snoozeInbox: vi.fn(),
       toggleInboxSelection: vi.fn(),
       selectAllInbox: vi.fn(),
       clearInboxSelection: vi.fn(),
@@ -78,14 +81,18 @@ describe('floating voice overlay', () => {
         },
       ],
       inboxSelection: ['inbox-1'],
+      snoozedInbox: [],
     }
     const html = renderToStaticMarkup(<VoiceOverlay {...({
       useVoice: (selector: (value: VoiceSnapshot) => unknown) => selector(voice),
+      useVoiceModelSettings: (selector: (value: unknown) => unknown) => selector({ ringDurationMs: 5_000 }),
       useSessions: (selector: (value: unknown) => unknown) => selector({ current: undefined, byId: {} }),
       end: vi.fn(),
       toggleMute: vi.fn(),
       cancelResponse: vi.fn(),
       answerInbox: vi.fn(),
+      answerInboxOne: vi.fn(),
+      snoozeInbox: vi.fn(),
       toggleInboxSelection: vi.fn(),
       selectAllInbox: vi.fn(),
       clearInboxSelection: vi.fn(),
@@ -98,7 +105,15 @@ describe('floating voice overlay', () => {
     expect(html).toContain('项目盘点')
     expect(html).toContain('失败')
     expect(html).toContain('全部已读')
-    expect(html).toContain('稍后再听')
+    // Every row carries its own three actions, so a task can be taken,
+    // dismissed, or deferred without touching the multi-select state.
+    expect(html.match(/>接听</g)).toHaveLength(3)
+    // Two rows plus the footer's bulk action.
+    expect(html.match(/>已读</g)).toHaveLength(2)
+    expect(html.match(/>全部已读</g)).toHaveLength(1)
+    expect(html.match(/>稍后</g)).toHaveLength(2)
+    expect(html).toContain('role="checkbox"')
+    expect(html).toContain('aria-checked="true"')
   })
 
   it('renders nothing when idle with an empty inbox', () => {
@@ -111,14 +126,18 @@ describe('floating voice overlay', () => {
       elapsedSeconds: 0,
       inbox: [],
       inboxSelection: [],
+      snoozedInbox: [],
     }
     const html = renderToStaticMarkup(<VoiceOverlay {...({
       useVoice: (selector: (value: VoiceSnapshot) => unknown) => selector(voice),
+      useVoiceModelSettings: (selector: (value: unknown) => unknown) => selector({ ringDurationMs: 5_000 }),
       useSessions: (selector: (value: unknown) => unknown) => selector({ current: undefined, byId: {} }),
       end: vi.fn(),
       toggleMute: vi.fn(),
       cancelResponse: vi.fn(),
       answerInbox: vi.fn(),
+      answerInboxOne: vi.fn(),
+      snoozeInbox: vi.fn(),
       toggleInboxSelection: vi.fn(),
       selectAllInbox: vi.fn(),
       clearInboxSelection: vi.fn(),

@@ -16,6 +16,21 @@ describe('built-in handoff skill', () => {
     expect(skill.content).toContain('汇报')
   })
 
+  it('carries every field the registry revalidates when the skill is loaded', () => {
+    // `ctx.skills.register()` only defaults `invocation` and `provider`. The
+    // registry revalidates the full definition on `get()`, where a missing
+    // `source` throws "loaded skill ... source must be a string" - so a
+    // definition that registers cleanly can still fail the moment a handoff
+    // tries to read it.
+    const skill = defaultHandoffSkill()
+    expect(skill.source).toBe('runtime')
+    // Every string field `validateDefinition` reads, minus `provider` and
+    // `invocation`, which `register()` fills in itself.
+    for (const field of ['name', 'description', 'content', 'source'] as const) {
+      expect(typeof skill[field]).toBe('string')
+    }
+  })
+
   it('registers with the skills service and returns its disposer', () => {
     const dispose = vi.fn()
     const register = vi.fn(() => dispose)

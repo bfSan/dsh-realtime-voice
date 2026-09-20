@@ -4,8 +4,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import {
-  DEFAULT_HANDOFF_SKILL_NAME,
   DEFAULT_REALTIME_VOICE_MODEL,
+  DEFAULT_RING_DURATION_MS,
   DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
   DEFAULT_REALTIME_VOICE_TURN_DETECTION,
   DEFAULT_REALTIME_VOICE_VOICE,
@@ -33,6 +33,7 @@ export interface VoiceModelSettingsValue {
   progressQuietTaskMs?: number
   handoffSkill?: string
   handoffInstructions?: string
+  ringDurationMs?: number
   apiKeyEnv?: string
 }
 
@@ -52,6 +53,7 @@ export interface VoiceModelSettingsSnapshot {
   progressQuietTaskMs: number
   handoffSkill: string
   handoffInstructions: string
+  ringDurationMs: number
   saving: boolean
   error: string | undefined
   apiKeyRef: string
@@ -68,7 +70,8 @@ const DEFAULT_VAD_THRESHOLD = 0.35
 const DEFAULT_SILENCE_DURATION_MS = 500
 const DEFAULT_MAX_HISTORY_TURNS = 20
 const MAX_STYLE_PROMPT_LENGTH = 2_000
-const MAX_HANDOFF_SKILL_LENGTH = 128
+/** Long enough for a deep absolute path, short enough to stay a setting. */
+const MAX_HANDOFF_SKILL_LENGTH = 512
 const MAX_HANDOFF_INSTRUCTIONS_LENGTH = 8_000
 
 /** Project one durable DSH settings namespace into an immediate two-model switch. */
@@ -87,8 +90,9 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     progressReporting: DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING,
     progressMinIntervalMs: DEFAULT_PROGRESS_MIN_INTERVAL_MS,
     progressQuietTaskMs: DEFAULT_PROGRESS_QUIET_TASK_MS,
-    handoffSkill: DEFAULT_HANDOFF_SKILL_NAME,
+    handoffSkill: '',
     handoffInstructions: '',
+    ringDurationMs: DEFAULT_RING_DURATION_MS,
     saving: false,
     error: undefined,
     apiKeyRef: DEFAULT_API_KEY_REF,
@@ -205,7 +209,7 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
   async setHandoffSkill(handoffSkill: string): Promise<void> {
     const trimmed = handoffSkill.trim()
     if (trimmed.length > MAX_HANDOFF_SKILL_LENGTH) return
-    if (trimmed !== '' && !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(trimmed)) return
+    if (trimmed !== '' && !isHandoffSkillOrPath(trimmed)) return
     await this.writeSetting('handoffSkill', trimmed, 'DSH 没有接受该汇报 Skill 设置。')
   }
 
@@ -213,6 +217,11 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     const trimmed = handoffInstructions.trim()
     if (trimmed.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH) return
     await this.writeSetting('handoffInstructions', trimmed, 'DSH 没有接受该汇报指令。')
+  }
+
+  async setRingDuration(ringDurationMs: number): Promise<void> {
+    if (!Number.isInteger(ringDurationMs) || ringDurationMs < 0 || ringDurationMs > 60_000) return
+    await this.writeSetting('ringDurationMs', ringDurationMs, 'DSH 没有接受该响铃时长。')
   }
 
   /** One write path for the scalar settings that only need a value round-trip. */
@@ -294,8 +303,9 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     const progressReporting = scope.value?.progressReporting ?? DEFAULT_REALTIME_VOICE_PROGRESS_REPORTING
     const progressMinIntervalMs = scope.value?.progressMinIntervalMs ?? DEFAULT_PROGRESS_MIN_INTERVAL_MS
     const progressQuietTaskMs = scope.value?.progressQuietTaskMs ?? DEFAULT_PROGRESS_QUIET_TASK_MS
-    const handoffSkill = scope.value?.handoffSkill ?? DEFAULT_HANDOFF_SKILL_NAME
+    const handoffSkill = scope.value?.handoffSkill ?? ''
     const handoffInstructions = scope.value?.handoffInstructions ?? ''
+    const ringDurationMs = scope.value?.ringDurationMs ?? DEFAULT_RING_DURATION_MS
     const previousRef = this.snapshot.apiKeyRef
     const apiKeyRef = this.apiKeyRef()
     this.publish({
@@ -319,6 +329,7 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
       progressQuietTaskMs,
       handoffSkill,
       handoffInstructions,
+      ringDurationMs,
       apiKeyRef,
       ...(apiKeyRef === previousRef ? {} : { apiKeyConfigured: false }),
     })
@@ -413,6 +424,12 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
   if (rawHandoffInstructions !== undefined
     && (typeof rawHandoffInstructions !== 'string'
       || rawHandoffInstructions.length > MAX_HANDOFF_INSTRUCTIONS_LENGTH)) return undefined
+  const rawRingDuration = (value as Record<string, unknown>).ringDurationMs
+  if (rawRingDuration !== undefined
+    && (typeof rawRingDuration !== 'number'
+      || !Number.isInteger(rawRingDuration)
+      || rawRingDuration < 0
+      || rawRingDuration > 60_000)) return undefined
   return {
     model,
     turnDetection,
@@ -425,8 +442,9 @@ export function decodeVoiceModelSettings(value: unknown): VoiceModelSettingsValu
     progressReporting,
     progressMinIntervalMs,
     progressQuietTaskMs,
-    handoffSkill: rawHandoffSkill ?? DEFAULT_HANDOFF_SKILL_NAME,
+    handoffSkill: rawHandoffSkill ?? '',
     handoffInstructions: rawHandoffInstructions ?? '',
+    ringDurationMs: rawRingDuration ?? DEFAULT_RING_DURATION_MS,
     ...(typeof apiKeyEnv === 'string' ? { apiKeyEnv } : {}),
   }
 }
@@ -440,6 +458,19 @@ function optionalBoundedInteger(
   if (value === undefined) return fallback
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) return undefined
   return value
+}
+
+/**
+ * The field accepts either a DSH skill name (kebab-case, no separators) or a
+ * path to a markdown file. Anything else is rejected before the write rather
+ * than silently producing guidance that can never resolve.
+ */
+function isHandoffSkillOrPath(value: string): boolean {
+  if (/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(value)) return true
+  if (value.includes('\0') || value.length > MAX_HANDOFF_SKILL_LENGTH) return false
+  // A path needs at least one separator or a file extension, otherwise a typo
+  // like "my skill" would be stored and only fail later during a handoff.
+  return value.includes('/') || value.includes('\\') || value.startsWith('~')
 }
 
 function optionalBoundedNumber(

@@ -15,6 +15,13 @@ export interface HandoffSkillDefinition {
     name: string;
     description: string;
     content: string;
+    /**
+     * Required by the registry's load-time revalidation. `ctx.skills.register()`
+     * defaults only `invocation` and `provider`, so omitting this registers
+     * cleanly and then throws "loaded skill ... source must be a string" the
+     * first time a handoff tries to read the body.
+     */
+    source: string;
     whenToUse?: string;
 }
 export interface HandoffSkillRegistryLike {

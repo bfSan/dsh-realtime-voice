@@ -27,10 +27,21 @@ export interface SkillRegistryLike {
  */
 export interface HandoffGuidanceRuntime {
     skills?: SkillRegistryLike;
+    /**
+     * Reads a guidance markdown file. Injected so the resolver stays testable
+     * and so a deployment without filesystem access can still use skill names.
+     */
+    readFile?: (path: string) => Promise<string>;
     logger?: {
         warn?: (message: string) => void;
     };
 }
+/**
+ * Whether the configured value should be read from disk instead of the skill
+ * registry. A DSH skill name is kebab-case and cannot contain a separator, a
+ * dot, or a drive letter, so any of those means "this is a path".
+ */
+export declare function looksLikeGuidancePath(value: string): boolean;
 /**
  * Resolve the operator-authored guidance that rides along with every voice
  * handoff. A configured DSH skill supplies the body; inline instructions are

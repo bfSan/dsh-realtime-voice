@@ -16,10 +16,64 @@ function contextWithSkill(content: string | undefined, skillName = 'voice-superv
 }
 
 describe('voice handoff guidance', () => {
-  it('defaults the skill name to the built-in one and no inline guidance', () => {
+  it('defaults to no guidance at all, so a fresh install attaches nothing', () => {
     const config = new Config({})
-    expect(config.handoffSkill).toBe(DEFAULT_HANDOFF_SKILL_NAME)
+    expect(config.handoffSkill).toBe('')
     expect(config.handoffInstructions).toBe('')
+  })
+
+  it('still resolves the built-in skill when the operator names it explicitly', async () => {
+    const { context, get } = contextWithSkill('内置汇报规范', DEFAULT_HANDOFF_SKILL_NAME)
+
+    const guidance = await resolveHandoffGuidance(
+      context,
+      new Config({ handoffSkill: DEFAULT_HANDOFF_SKILL_NAME }),
+      {},
+    )
+
+    expect(get).toHaveBeenCalledWith(DEFAULT_HANDOFF_SKILL_NAME, expect.anything())
+    expect(guidance.body).toBe('内置汇报规范')
+  })
+
+  it('reads guidance straight from a file path instead of the skill registry', async () => {
+    const get = vi.fn(async () => undefined)
+    const readFile = vi.fn(async () => '# 汇报规范\n\n先给结论，最多两句。\n')
+
+    const guidance = await resolveHandoffGuidance(
+      { skills: { get }, readFile, logger: { warn: vi.fn() } },
+      new Config({ handoffSkill: '/Users/someone/skills/supervisor/SKILL.md' }),
+      {},
+    )
+
+    expect(readFile).toHaveBeenCalledWith('/Users/someone/skills/supervisor/SKILL.md')
+    expect(get).not.toHaveBeenCalled()
+    expect(guidance.body).toContain('先给结论')
+  })
+
+  it('strips SKILL.md frontmatter so only the operator body reaches the Agent', async () => {
+    const readFile = vi.fn(async () => '---\nname: voice-supervisor\ndescription: rules\n---\n\n正文第一句。\n')
+
+    const guidance = await resolveHandoffGuidance(
+      { readFile, logger: { warn: vi.fn() } },
+      new Config({ handoffSkill: './my-skill/SKILL.md' }),
+      {},
+    )
+
+    expect(guidance.body).toBe('正文第一句。')
+  })
+
+  it('treats a missing guidance file as no guidance and warns', async () => {
+    const warn = vi.fn()
+    const readFile = vi.fn(async () => { throw new Error('ENOENT: no such file') })
+
+    const guidance = await resolveHandoffGuidance(
+      { readFile, logger: { warn } },
+      new Config({ handoffSkill: '/nope/missing.md', handoffInstructions: '兜底指令' }),
+      {},
+    )
+
+    expect(guidance.body).toBe('兜底指令')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('missing.md'))
   })
 
   it('loads the configured DSH skill and passes its body through', async () => {
