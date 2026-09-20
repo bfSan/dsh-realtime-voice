@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.13`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
+当前版本：`0.1.0-alpha.14`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
 
 本包同时声明 DSH bundle、Host 插件和“原生 WebUI 浏览器侧”插件。这里不是另做一个网站：UI 直接注入 DSH 自带的 `http://127.0.0.1:3080`，不新增页面或 UI 端口。它不修改 DSH 源码，不另起后台进程；卸载或禁用时会移除 UI/路由并关闭麦克风、音频、浏览器 WebSocket 和百炼连接，已经交给 DSH 的任务继续运行。
 
@@ -62,7 +62,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.13
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.14
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
