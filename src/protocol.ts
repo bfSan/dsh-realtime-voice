@@ -124,7 +124,6 @@ export type VoiceClientControl = VoiceHello
   | { type: 'voice.playback-drained'; streamId: number }
   | { type: 'voice.commit' }
   | { type: 'voice.inbox-deliver'; entryIds: string[] }
-  | { type: 'voice.inbox-read'; entryIds: string[] }
   | { type: 'voice.approval-answer'; approvalId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'voice.question-answer'; requestId: string; answers: VoiceQuestionAnswer[] }
   | { type: 'voice.ping'; sentAt: number }
@@ -303,7 +302,7 @@ export function isVoiceClientControl(value: unknown): value is VoiceClientContro
   const message = value as Record<string, unknown>
   if (message.type === 'voice.end') return message.reason === undefined || (typeof message.reason === 'string' && message.reason.length <= 128)
   if (message.type === 'voice.cancel-response' || message.type === 'voice.commit') return true
-  if (message.type === 'voice.inbox-deliver' || message.type === 'voice.inbox-read') {
+  if (message.type === 'voice.inbox-deliver') {
     return Array.isArray(message.entryIds)
       && message.entryIds.length > 0
       && message.entryIds.length <= 20

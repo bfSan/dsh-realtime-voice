@@ -236,9 +236,6 @@ export class VoiceConnection {
       case 'voice.inbox-deliver':
         this.deliverInboxEntries(parsed.entryIds)
         return
-      case 'voice.inbox-read':
-        this.inbox?.markDelivered(parsed.entryIds)
-        return
       case 'voice.approval-answer':
         await this.answerApproval(parsed.approvalId, parsed.outcome)
         return

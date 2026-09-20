@@ -112,9 +112,6 @@ export type VoiceClientControl = VoiceHello | {
     type: 'voice.inbox-deliver';
     entryIds: string[];
 } | {
-    type: 'voice.inbox-read';
-    entryIds: string[];
-} | {
     type: 'voice.approval-answer';
     approvalId: string;
     outcome: 'allowed-once' | 'rejected';
