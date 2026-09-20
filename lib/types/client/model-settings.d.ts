@@ -1,6 +1,6 @@
-import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client';
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
-import type { IApiClient } from '@deepseek-ai/dsh-client-connection/client';
+import type { Context } from '@deepseek-ai/cordis';
 import { type RealtimeVoiceModel, type RealtimeVoiceTurnDetection } from '../models.ts';
 export interface VoiceModelSettingsValue {
     model: RealtimeVoiceModel;
@@ -23,11 +23,12 @@ export interface VoiceModelSettingsSnapshot {
 /** Project one durable DSH settings namespace into an immediate two-model switch. */
 export declare class VoiceModelSettingsController implements HostObservable<VoiceModelSettingsSnapshot> {
     private readonly scope;
-    private readonly api;
+    private readonly ctx;
     private snapshot;
     private readonly listeners;
     private readonly unsubscribe;
-    constructor(scope: SettingsScope<VoiceModelSettingsValue>, api: Pick<IApiClient, 'credentials'>);
+    private disposed;
+    constructor(scope: SettingsScope<VoiceModelSettingsValue>, ctx: Context);
     getSnapshot: () => VoiceModelSettingsSnapshot;
     subscribe: (listener: () => void) => (() => void);
     select(model: RealtimeVoiceModel): Promise<void>;
@@ -36,6 +37,11 @@ export declare class VoiceModelSettingsController implements HostObservable<Voic
     saveApiKey(value: string): Promise<boolean>;
     /** Refresh only when the Host reports that this card's credential changed. */
     refreshCredential(ref: string): void;
+    /**
+     * Bound scope disposer plus the credential mirror. The injected Context is
+     * used only through `remote.credentials`, so a stale context after teardown
+     * cannot re-read; `disposed` closes that window explicitly.
+     */
     dispose(): void;
     private adoptScope;
     private readCredential;

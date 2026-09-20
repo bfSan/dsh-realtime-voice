@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import type { DirectBackendEventKind } from '../direct-protocol.ts'
+import { RpcId } from './dsh-runtime-compat.ts'
 import {
   DshVoiceCoordinator,
   type PendingVoiceApproval,

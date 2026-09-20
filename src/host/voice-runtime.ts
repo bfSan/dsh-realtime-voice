@@ -204,6 +204,19 @@ export class VoiceRuntime {
     if (this.activeLease?.voiceSessionId === state.id) this.activeLease.lastSeenAt = state.lastSeenAt
   }
 
+  /**
+   * Whether one DSH session is currently owned by a live voice call. Used to
+   * scope the approval and question waterfalls: a session with no call keeps
+   * its normal browser interaction surface.
+   */
+  ownsSession(sessionId: string): boolean {
+    this.sweep()
+    const lease = this.activeLease
+    if (lease !== undefined && lease.sessionId === sessionId) return true
+    for (const state of this.calls.values()) if (state.sessionId === sessionId) return true
+    return false
+  }
+
   release(connectionId: string, retainForResume = false): void {
     const lease = this.activeLease
     if (lease?.connectionId !== connectionId) return

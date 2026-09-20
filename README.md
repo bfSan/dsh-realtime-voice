@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.9`，目标 DSH：`0.1.0-rc.7`。
+当前版本：`0.1.0-alpha.10`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
 
 本包同时声明 DSH bundle、Host 插件和“原生 WebUI 浏览器侧”插件。这里不是另做一个网站：UI 直接注入 DSH 自带的 `http://127.0.0.1:3080`，不新增页面或 UI 端口。它不修改 DSH 源码，不另起后台进程；卸载或禁用时会移除 UI/路由并关闭麦克风、音频、浏览器 WebSocket 和百炼连接，已经交给 DSH 的任务继续运行。
 
@@ -56,10 +56,10 @@ dsh plugin --profile web add .
 
 ## 一键安装
 
-从 GitHub 安装当前版本：
+从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:martinbear1/dsh-realtime-voice#v0.1.0-alpha.9
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.10
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
@@ -69,6 +69,19 @@ dsh plugin --profile web add github:martinbear1/dsh-realtime-voice#v0.1.0-alpha.
 ```powershell
 dsh plugin --profile web remove @harness-remote/dsh-realtime-voice
 ```
+
+## DSH 版本兼容
+
+`0.1.0-alpha.10` 把目标 DSH 从 `0.1.0-rc.7` 前移到 `0.1.5-rc.2`。这两代之间官方删除了本插件原先依赖的 `@deepseek-ai/dsh-host-apiproxy` 与 `@deepseek-ai/dsh-client-runtime`，因此升级不是改版本号，而是把 Host 与浏览器两侧的接缝整体迁移：
+
+- 会话面由 `ctx.apiProxy.sessions.*` 迁移到 `ctx.sessionController.list/page/prompt/updateQueue/cancel`，事件改由 Cordis `session/event` 与 `sessionController.control()` 流合成
+- 审批与追问由 `ctx.apiProxy.respond` 迁移到 `approval/request`、`user-questions/request` 两个 scoped waterfall，并且只在语音会话活跃时接管
+- 浏览器侧设置由 `installSettingsSection` 迁移到 `ctx.settings.installSection`，凭据读写由 `connection.api.credentials` 迁移到 `ctx.remote.credentials.describe/set/unset`
+- `ctx.slots` 改由 `@deepseek-ai/dsh-client-ui-renderer/client` 提供，`ctx.sessions.open()` 使用 `ISessions` 类型
+
+为把依赖面收敛在插件内部、避免触碰 DSH 源码或污染其它 profile，迁移集中在新增的 `src/host/dsh-runtime-compat.ts`：它在 Host 侧以 `ctx.provide('apiProxy', …)` 装回一层兼容门面，把新事件流翻译成原有帧协议，其余业务代码保持不变。`inject` 列表已同步去掉 `apiProxy`。
+
+构建与测试现状见下方“已验证”；`pnpm build` 与 `pnpm test` 在 `0.1.5-rc.2` 依赖下全绿。
 
 ## 微信小程序
 
@@ -80,6 +93,7 @@ Host 中转协议详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，客户端直连�
 
 ## 已验证
 
+- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 21 个测试文件 110 个用例全绿
 - DSH `0.1.0-rc.7` 官方 CLI 本地安装、卸载、重新安装
 - 原生 3080 WebUI 插槽：安装后按钮 1 个，卸载后 0 个，重装后恢复
 - 真实 WebUI 插件配置卡：Flash/Plus 即时持久化切换；系统 Key 状态检测和 write-only 输入框正常挂载

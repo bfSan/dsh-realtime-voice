@@ -2,4 +2,6 @@
 - insert:
     - id: realtime-voice
       name: '@harness-remote/dsh-realtime-voice'
-      inject: [webServer, apiProxy, credentials, agents, systemPrompt, tools]
+      # `apiProxy` is intentionally absent: DSH 0.1.5 removed that service and
+      # this plugin now installs the legacy surface itself over sessionController.
+      inject: [webServer, credentials, agents, systemPrompt, tools]

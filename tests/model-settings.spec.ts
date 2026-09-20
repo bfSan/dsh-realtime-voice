@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { Config } from '../src/host/config.ts'
 import { REALTIME_VOICE_MODELS, REALTIME_VOICE_TURN_DETECTION } from '../src/models.ts'
 import {
@@ -69,16 +69,21 @@ describe('realtime voice model settings', () => {
       set: vi.fn(),
       unset: vi.fn(),
     } as unknown as SettingsScope<VoiceModelSettingsValue>
+    // DSH 0.1.5 moved the credential seam from `connection.api` to the typed
+    // `remote.credentials` namespace, which answers unwrapped results.
     const describe = vi.fn(async () => ({
-      rpcId: 'test',
-      result: { ok: true as const, value: { credentials: { DASHSCOPE_API_KEY: { configured: true, writable: true } } } },
+      ok: true as const,
+      value: { DASHSCOPE_API_KEY: { configured: true, writable: true } },
     }))
-    const set = vi.fn(async () => ({ rpcId: 'test', result: { ok: true as const, value: {} } }))
-    const controller = new VoiceModelSettingsController(scope, { credentials: { describe, set } } as never)
+    const set = vi.fn(async () => ({ ok: true as const, value: undefined }))
+    const controller = new VoiceModelSettingsController(
+      scope,
+      { remote: { credentials: { describe, set } } } as never,
+    )
     await vi.waitFor(() => { expect(controller.getSnapshot().apiKeyConfigured).toBe(true) })
 
     await expect(controller.saveApiKey(' new-secret ')).resolves.toBe(true)
-    expect(set).toHaveBeenCalledWith({ ref: 'DASHSCOPE_API_KEY', value: 'new-secret' })
+    expect(set).toHaveBeenCalledWith('DASHSCOPE_API_KEY', 'new-secret')
     // The literal is never projected back into browser state.
     expect(JSON.stringify(controller.getSnapshot())).not.toContain('new-secret')
     controller.dispose()

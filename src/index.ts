@@ -4,15 +4,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-credentials'
-import type {} from '@deepseek-ai/dsh-host-apiproxy'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import { WebSocketServer } from 'ws'
 import { VOICE_DIRECT_PROTOCOL, VOICE_ROUTE, VOICE_STATUS_ROUTE } from './protocol.ts'
 import { VOICE_DIRECT_ROUTE, VOICE_DIRECT_STATUS_ROUTE } from './direct-protocol.ts'
 import { Config, type VoiceConfig } from './host/config.ts'
+import { installApiProxyCompat } from './host/dsh-runtime-compat.ts'
 import { VoiceConnection } from './host/voice-connection.ts'
 import { VoiceRuntime } from './host/voice-runtime.ts'
 import { DirectControlConnection } from './host/direct-control-connection.ts'
@@ -21,8 +21,13 @@ import { REALTIME_VOICE_SETTINGS_NAMESPACE } from './models.ts'
 export { Config }
 export type { VoiceConfig }
 
-/** Host services required before the route can be mounted. */
-export const inject = ['webServer', 'apiProxy', 'credentials', 'agents', 'systemPrompt', 'tools']
+/**
+ * Host services required before the route can be mounted. `apiProxy` is absent
+ * because DSH 0.1.5 removed it: this plugin now installs that legacy surface
+ * itself over `sessionController`, so it is a provider of the name rather than
+ * a dependent on it.
+ */
+export const inject = ['webServer', 'credentials', 'agents', 'systemPrompt', 'tools']
 
 /** Mount one exact WebSocket route. Every accepted connection is owned by this plugin fiber. */
 export function apply(ctx: Context, config: VoiceConfig): void {
@@ -35,16 +40,17 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   // Settings are optional at the Cordis boundary. When the Web profile serves
   // them, model changes become authoritative for the next accepted call; an
   // already connected upstream keeps its negotiated model until that call ends.
-  installSettingsSection(
-    ctx,
-    settingsNamespace(REALTIME_VOICE_SETTINGS_NAMESPACE),
-    Config,
-    config,
-    {
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, REALTIME_VOICE_SETTINGS_NAMESPACE, Config, config, {
       setSource(source) { readConfig = source },
       onChange() {},
-    },
-  )
+    })
+  })
+
+  // DSH 0.1.5 deleted the `apiProxy` service and the Session/Typert runtime the
+  // rc.7 host bridge was written against. Reinstall the exact surface the rest
+  // of this plugin consumes, backed by the current authoritative runtime.
+  installApiProxyCompat(ctx, { isVoiceSession: sessionId => voiceRuntime.ownsSession(sessionId) })
 
   const authorizeUpgrade = (request: IncomingMessage, socket: Duplex): VoiceConfig | undefined => {
     const activeConfig = readConfig()

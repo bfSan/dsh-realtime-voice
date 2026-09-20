@@ -1,6 +1,8 @@
-import type { SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { IApiClient } from '@deepseek-ai/dsh-client-connection/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import {
   DEFAULT_REALTIME_VOICE_MODEL,
   DEFAULT_REALTIME_VOICE_TURN_DETECTION,
@@ -49,10 +51,11 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
   }
   private readonly listeners = new Set<() => void>()
   private readonly unsubscribe: () => void
+  private disposed = false
 
   constructor(
     private readonly scope: SettingsScope<VoiceModelSettingsValue>,
-    private readonly api: Pick<IApiClient, 'credentials'>,
+    private readonly ctx: Context,
   ) {
     this.unsubscribe = scope.subscribe(() => { this.adoptScope() })
     this.adoptScope()
@@ -110,8 +113,8 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     const ref = this.apiKeyRef()
     this.publish({ ...this.snapshot, apiKeySaving: true, apiKeyError: undefined })
     try {
-      const response = await this.api.credentials.set({ ref, value: key })
-      if (!response.result.ok) throw new Error('DSH credentials 拒绝了该密钥。')
+      const response = await this.ctx.remote.credentials.set(ref as never, key)
+      if (!response.ok) throw new Error('DSH credentials 拒绝了该密钥。')
       await this.readCredential()
       const configured = this.snapshot.apiKeyRef === ref && this.snapshot.apiKeyConfigured
       this.publish({
@@ -131,7 +134,13 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
     if (ref === this.apiKeyRef()) void this.readCredential()
   }
 
+  /**
+   * Bound scope disposer plus the credential mirror. The injected Context is
+   * used only through `remote.credentials`, so a stale context after teardown
+   * cannot re-read; `disposed` closes that window explicitly.
+   */
   dispose(): void {
+    this.disposed = true
     this.unsubscribe()
     this.listeners.clear()
   }
@@ -158,20 +167,19 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
 
   private async readCredential(): Promise<void> {
     const ref = this.apiKeyRef()
-    let response: Awaited<ReturnType<IApiClient['credentials']['describe']>>
     try {
-      response = await this.api.credentials.describe({ refs: [ref] })
+      const response = await this.ctx.remote.credentials.describe([ref as never])
+      if (this.disposed || !response.ok || ref !== this.apiKeyRef()) return
+      const credential = response.value[ref]
+      this.publish({
+        ...this.snapshot,
+        apiKeyRef: ref,
+        apiKeyConfigured: credential?.configured ?? false,
+        apiKeyWritable: credential?.writable ?? true,
+      })
     } catch {
       return
     }
-    if (!response.result.ok || ref !== this.apiKeyRef()) return
-    const credential = response.result.value.credentials[ref]
-    this.publish({
-      ...this.snapshot,
-      apiKeyRef: ref,
-      apiKeyConfigured: credential?.configured ?? false,
-      apiKeyWritable: credential?.writable ?? true,
-    })
   }
 
   private apiKeyRef(): string {

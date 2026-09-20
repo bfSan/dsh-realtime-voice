@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { RpcId } from '@deepseek-ai/dsh-host-apiproxy'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { RpcId, type LegacySessionSummary } from './dsh-runtime-compat.ts'
 
 export interface VoiceSessionSnapshot {
   sessionId: string
@@ -19,7 +19,7 @@ export class DshVoiceSession {
   async snapshot(): Promise<VoiceSessionSnapshot> {
     const response = await this.ctx.apiProxy.sessions.list({ rpcId: this.rpcId(), payload: {} })
     if (!response.result.ok) throw new Error(response.result.error.message)
-    const item = response.result.value.items.find(candidate => candidate.sessionId === this.sessionId)
+    const item = response.result.value.items.find((candidate: LegacySessionSummary) => candidate.sessionId === this.sessionId)
     if (item === undefined) throw new Error(`DSH session not found: ${this.sessionId}`)
     const title = projectionTitle(item.projections?.values)
     const summary = await this.lastAssistantText().catch(() => undefined)
@@ -80,4 +80,3 @@ export function assistantText(value: unknown): string | undefined {
     .trim()
   return text === '' ? undefined : text
 }
-

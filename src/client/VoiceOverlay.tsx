@@ -1,5 +1,5 @@
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { realtimeVoiceModelLabel, realtimeVoiceTurnDetectionLabel } from '../models.ts'
 import type { VoiceQuestionAnswer } from '../protocol.ts'

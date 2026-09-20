@@ -95,6 +95,12 @@ export declare class VoiceRuntime {
     /** Atomically consume a disconnected owner's resume capability and release its lease. */
     resumeAndRelease(request: VoiceReleaseRequest): VoiceReleaseResult;
     touch(state: VoiceContinuityState): void;
+    /**
+     * Whether one DSH session is currently owned by a live voice call. Used to
+     * scope the approval and question waterfalls: a session with no call keeps
+     * its normal browser interaction surface.
+     */
+    ownsSession(sessionId: string): boolean;
     release(connectionId: string, retainForResume?: boolean): void;
     occupancy(inactiveProtocol?: VoiceControlProtocol): VoiceOccupancyStatus;
     clear(): void;

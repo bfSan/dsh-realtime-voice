@@ -1,10 +1,15 @@
 /** DSH browser half: official slot registrations backed by one root-lifetime call controller. */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import {
   REALTIME_VOICE_SETTINGS_NAMESPACE,
   type RealtimeVoiceModel,
@@ -19,23 +24,22 @@ import { VoiceOverlay } from './VoiceOverlay.tsx'
 import type { VoiceSettingsCardInjected } from './VoiceSettingsCard.tsx'
 import { VoiceSettingsCard } from './VoiceSettingsCard.tsx'
 
-export const inject = ['slots', 'sessions', 'connection', 'remote', 'settingsScope']
+export const inject = ['slots', 'sessions', 'remote', 'settingsScope']
 
 /** Register one composer action and one frame overlay; both disappear with this client fiber. */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   const voice = new VoiceCallController()
   voice.startPresence()
-  const { api } = ctx.get('connection') as ConnectionHandle
   const modelSettings = new VoiceModelSettingsController(ctx.settingsScope.bind({
     namespace: REALTIME_VOICE_SETTINGS_NAMESPACE,
     decode: decodeVoiceModelSettings,
-  }), api)
+  }), ctx)
   ctx.effect(() => async () => {
     modelSettings.dispose()
     await voice.dispose()
   }, 'realtime-voice: browser media and settings lifecycle')
   ctx.effect(
-    () => ctx.remote.$on('credentials/updated', ref => { modelSettings.refreshCredential(ref) }),
+    () => ctx.remote.$on('credentials/reference-updated', ref => { modelSettings.refreshCredential(ref) }),
     'realtime-voice: credential state invalidation',
   )
 
@@ -43,7 +47,7 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.input.right',
     id: 'realtime-voice',
     order: 20,
-    inject: (sessionId): VoiceButtonInjected => ({
+    inject: (sessionId: string): VoiceButtonInjected => ({
       hooks: { voice },
       toggle: () => {
         const phase = voice.getSnapshot().phase
@@ -65,7 +69,13 @@ export function apply(ctx: ClientContext): void {
       answerApproval: (approvalId, outcome) => voice.answerApproval(approvalId, outcome),
       answerQuestion: (requestId, answers) => voice.answerQuestion(requestId, answers),
       openSession: (sessionId) => {
-        ctx.sessions.open(sessionId as Parameters<typeof ctx.sessions.open>[0])
+        // Two declarations can name `ctx.sessions` in one Client compilation:
+        // the browser `ISessions` this plugin talks to, and the Host
+        // `SessionStore` reachable through the controller's own type chain.
+        // Only the browser face owns `open()`, so name it explicitly instead
+        // of depending on which augmentation merges last.
+        const sessions = ctx.sessions as unknown as ISessions
+        sessions.open(sessionId as Parameters<ISessions['open']>[0])
       },
     }),
   }, VoiceOverlay))
