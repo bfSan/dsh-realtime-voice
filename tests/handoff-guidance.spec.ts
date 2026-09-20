@@ -12,7 +12,7 @@ function contextWithSkill(content: string | undefined, skillName = 'voice-superv
     if (content === undefined || name !== skillName) return undefined
     return { name: skillName, description: 'voice reporting rules', content }
   })
-  return { context: { skills: { get }, logger: { warn } } as never, get, warn }
+  return { context: { skills: { get }, logger: { warn } }, get, warn }
 }
 
 describe('voice handoff guidance', () => {
@@ -64,7 +64,7 @@ describe('voice handoff guidance', () => {
     const context = {
       skills: { get: vi.fn(async () => { throw new Error('registry exploded') }) },
       logger: { warn: vi.fn() },
-    } as never
+    }
 
     const guidance = await resolveHandoffGuidance(
       context,
@@ -77,7 +77,7 @@ describe('voice handoff guidance', () => {
 
   it('still applies inline instructions when the skill service is absent', async () => {
     const guidance = await resolveHandoffGuidance(
-      { logger: { warn: vi.fn() } } as never,
+      { logger: { warn: vi.fn() } },
       new Config({ handoffSkill: 'voice-supervisor', handoffInstructions: '汇报时不要念表格。' }),
       {},
     )
@@ -113,7 +113,7 @@ describe('voice handoff guidance', () => {
 
   it('trims blank whitespace-only configuration down to no guidance', async () => {
     const guidance = await resolveHandoffGuidance(
-      { skills: { get: vi.fn(async () => undefined) }, logger: { warn: vi.fn() } } as never,
+      { skills: { get: vi.fn(async () => undefined) }, logger: { warn: vi.fn() } },
       new Config({ handoffSkill: '   ', handoffInstructions: '   ' }),
       {},
     )

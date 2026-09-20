@@ -4,6 +4,7 @@ import type WebSocket from 'ws';
 import { type VoiceHello, type VoiceReady } from '../protocol.ts';
 import type { VoiceConfig } from './config.ts';
 import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts';
+import { type HandoffGuidanceRuntime } from './handoff-guidance.ts';
 import type { VoiceInbox } from './voice-inbox.ts';
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export declare class VoiceConnection {
@@ -14,6 +15,7 @@ export declare class VoiceConnection {
     private readonly onClosed;
     private readonly runtime;
     private readonly inbox;
+    private readonly guidanceRuntime;
     private readonly provisionalId;
     private continuity;
     private serverSeq;
@@ -57,7 +59,7 @@ export declare class VoiceConnection {
     private readonly pendingAssistantByTurn;
     private readonly progressGate;
     private readonly progressCoalescer;
-    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined);
+    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime);
     get id(): string;
     dispose(reason?: string): void;
     private receive;

@@ -26,6 +26,7 @@ import { DirectControlConnection } from './host/direct-control-connection.ts'
 import { REALTIME_VOICE_SETTINGS_NAMESPACE } from './models.ts'
 import { registerDefaultHandoffSkill } from './host/handoff-skill.ts'
 import { startVoiceInbox, VoiceInbox } from './host/voice-inbox.ts'
+import type { HandoffGuidanceRuntime } from './host/handoff-guidance.ts'
 
 export { Config }
 export type { VoiceConfig }
@@ -43,9 +44,21 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   const proxyServer = new WebSocketServer({ noServer: true })
   const directServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
 
-  // The built-in reporting skill is an optional convenience: a project skill
-  // with the same name outranks it, and an absent skills service is not fatal.
-  ctx.effect(() => registerDefaultHandoffSkill(ctx as never) ?? (() => {}), 'realtime-voice: built-in handoff skill')
+  // `skills` is optional: this plugin must mount on a DSH build without the
+  // skill bundle, and Cordis throws when a non-injected service is read. The
+  // injection below fills this holder only once the service actually exists,
+  // so guidance resolution can stay a plain, testable function.
+  const guidanceRuntime: HandoffGuidanceRuntime = { logger: ctx.logger }
+  ctx.inject(['skills'], (skillsCtx) => {
+    const registry = (skillsCtx as unknown as { skills?: HandoffGuidanceRuntime['skills'] }).skills
+    if (registry !== undefined) guidanceRuntime.skills = registry
+    // The built-in reporting skill is a convenience, not a dependency: a
+    // project skill with the same name outranks it by DSH's normal layering.
+    skillsCtx.effect(
+      () => registerDefaultHandoffSkill(skillsCtx) ?? (() => {}),
+      'realtime-voice: built-in handoff skill',
+    )
+  })
 
   const connections = new Set<{ dispose(reason?: string): void }>()
   const voiceRuntime = new VoiceRuntime()
@@ -94,7 +107,16 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     if (activeConfig === undefined) return
     proxyServer.handleUpgrade(request, socket, head, (websocket) => {
       let connection: VoiceConnection
-      connection = new VoiceConnection(ctx, websocket, request, activeConfig, () => connections.delete(connection), voiceRuntime, inbox)
+      connection = new VoiceConnection(
+        ctx,
+        websocket,
+        request,
+        activeConfig,
+        () => connections.delete(connection),
+        voiceRuntime,
+        inbox,
+        guidanceRuntime,
+      )
       connections.add(connection)
     })
   }
@@ -113,6 +135,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
         voiceRuntime,
         undefined,
         inbox,
+        guidanceRuntime,
       )
       connections.add(connection)
     })

@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 import type WebSocket from 'ws';
+import { type HandoffGuidanceRuntime } from './handoff-guidance.ts';
 import type { VoiceInbox } from './voice-inbox.ts';
 import type { VoiceConfig } from './config.ts';
 import { TemporaryKeyService } from './temporary-key-service.ts';
@@ -15,6 +16,7 @@ export declare class DirectControlConnection {
     private readonly runtime;
     private readonly temporaryKeys;
     private readonly inbox;
+    private readonly guidanceRuntime;
     private readonly provisionalId;
     private continuity;
     private direct;
@@ -29,7 +31,7 @@ export declare class DirectControlConnection {
     private functionQueue;
     private readonly helloTimer;
     private heartbeatTimer;
-    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime: VoiceRuntime, temporaryKeys?: TemporaryKeyService, inbox?: VoiceInbox | undefined);
+    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime: VoiceRuntime, temporaryKeys?: TemporaryKeyService, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime);
     get id(): string;
     dispose(reason?: string): void;
     private receive;

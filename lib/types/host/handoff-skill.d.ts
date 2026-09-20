@@ -30,7 +30,7 @@ export declare function defaultHandoffSkill(options?: DefaultHandoffSkillOptions
  *
  * @returns the registry disposer, or undefined when registration was skipped.
  */
-export declare function registerDefaultHandoffSkill(ctx: {
+export declare function registerDefaultHandoffSkill(runtime: {
     skills?: HandoffSkillRegistryLike;
     logger?: {
         warn?: (message: string) => void;

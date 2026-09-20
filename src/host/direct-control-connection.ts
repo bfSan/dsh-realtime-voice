@@ -20,7 +20,7 @@ import type { VoiceQuestionAnswer } from './dsh-coordinator.ts'
 import { DshVoiceCoordinator, type PendingVoiceApproval, type PendingVoiceQuestion } from './dsh-coordinator.ts'
 import { DshVoiceSession } from './dsh-session-state.ts'
 import { DshFunctionBridge } from './dsh-function-bridge.ts'
-import { resolveHandoffGuidance } from './handoff-guidance.ts'
+import { resolveHandoffGuidance, type HandoffGuidanceRuntime } from './handoff-guidance.ts'
 import type { VoiceInbox } from './voice-inbox.ts'
 import { DshBackendBridge, type DshBackendEvent } from './dsh-backend-bridge.ts'
 import { buildDirectMediaOfferBootstrap, buildVoiceInstructions } from './voice-bootstrap.ts'
@@ -64,6 +64,7 @@ export class DirectControlConnection {
     private readonly runtime: VoiceRuntime,
     private readonly temporaryKeys = new TemporaryKeyService(),
     private readonly inbox: VoiceInbox | undefined = undefined,
+    private readonly guidanceRuntime: HandoffGuidanceRuntime = {},
   ) {
     void this.request
     this.helloTimer = setTimeout(() => this.fail('hello-timeout', '客户端未及时发送 direct voice.hello。', false), 10_000)
@@ -249,7 +250,11 @@ export class DirectControlConnection {
       onApprovalResolved: (approval, outcome) => this.afterApprovalResolved(approval, outcome),
       onQuestionResolved: question => this.afterQuestionResolved(question),
     }, lease.state.interactionReceipts, {
-      resolveGuidance: async () => await resolveHandoffGuidance(this.ctx, this.config, status.cwd === undefined ? {} : { cwd: status.cwd }),
+      resolveGuidance: async () => await resolveHandoffGuidance(
+        this.guidanceRuntime,
+        this.config,
+        status.cwd === undefined ? {} : { cwd: status.cwd },
+      ),
       onHandoff: handoff => this.inbox?.watch({
         handoffId: handoff.handoffId,
         sessionId: handoff.sessionId,

@@ -39,7 +39,7 @@ import { DshFunctionBridge } from './dsh-function-bridge.ts'
 import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.ts'
 import { ProgressAnnouncementGate } from './progress-gate.ts'
 import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
-import { resolveHandoffGuidance } from './handoff-guidance.ts'
+import { resolveHandoffGuidance, type HandoffGuidanceRuntime } from './handoff-guidance.ts'
 import type { VoiceInbox } from './voice-inbox.ts'
 
 
@@ -114,6 +114,7 @@ export class VoiceConnection {
     private readonly onClosed: () => void,
     private readonly runtime: VoiceRuntime = new VoiceRuntime(),
     private readonly inbox: VoiceInbox | undefined = undefined,
+    private readonly guidanceRuntime: HandoffGuidanceRuntime = {},
   ) {
     this.progressGate = new ProgressAnnouncementGate({
       mode: config.progressReporting,
@@ -330,7 +331,11 @@ export class VoiceConnection {
       onApprovalResolved: (approval, outcome) => this.afterApprovalResolved(approval, outcome),
       onQuestionResolved: question => this.afterQuestionResolved(question),
     }, this.continuity.interactionReceipts, {
-      resolveGuidance: async () => await resolveHandoffGuidance(this.ctx, this.config, status.cwd === undefined ? {} : { cwd: status.cwd }),
+      resolveGuidance: async () => await resolveHandoffGuidance(
+        this.guidanceRuntime,
+        this.config,
+        status.cwd === undefined ? {} : { cwd: status.cwd },
+      ),
       onHandoff: handoff => this.inbox?.watch({
         handoffId: handoff.handoffId,
         sessionId: handoff.sessionId,

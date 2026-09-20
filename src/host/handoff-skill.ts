@@ -84,17 +84,14 @@ export function defaultHandoffSkill(options: DefaultHandoffSkillOptions = {}): H
  * @returns the registry disposer, or undefined when registration was skipped.
  */
 export function registerDefaultHandoffSkill(
-  ctx: { skills?: HandoffSkillRegistryLike; logger?: { warn?: (message: string) => void } },
+  runtime: { skills?: HandoffSkillRegistryLike; logger?: { warn?: (message: string) => void } },
 ): (() => void) | undefined {
-  // Reading an absent Cordis service throws rather than yielding undefined, so
-  // the property access itself has to live inside the guard: a DSH build
-  // without the skills service must still mount the voice route.
   try {
-    const skills = ctx.skills
+    const skills = runtime.skills
     if (skills === undefined) return undefined
     return skills.register(defaultHandoffSkill())
   } catch (error) {
-    ctx.logger?.warn?.(
+    runtime.logger?.warn?.(
       `[realtime-voice] built-in handoff skill could not be registered: ${error instanceof Error ? error.message : String(error)}`,
     )
     return undefined

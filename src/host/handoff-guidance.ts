@@ -1,4 +1,3 @@
-import type { Context } from '@deepseek-ai/cordis'
 import type { VoiceConfig } from './config.ts'
 
 /** One handoff prompt cannot carry unbounded guidance text. */
@@ -19,8 +18,19 @@ interface SkillDefinitionLike {
   content?: unknown
 }
 
-interface SkillRegistryLike {
+export interface SkillRegistryLike {
   get(name: string, options: { cwd?: string; signal?: AbortSignal }): Promise<SkillDefinitionLike | undefined>
+}
+
+/**
+ * The optional services guidance resolution reads. Kept as data rather than a
+ * Cordis Context because a service that is not declared in `inject` throws on
+ * property access, and this resolver must be callable from a fiber that never
+ * injected `skills`.
+ */
+export interface HandoffGuidanceRuntime {
+  skills?: SkillRegistryLike
+  logger?: { warn?: (message: string) => void }
 }
 
 /**
@@ -33,13 +43,13 @@ interface SkillRegistryLike {
  * skill name must never be able to reject a user's spoken request.
  */
 export async function resolveHandoffGuidance(
-  ctx: Context,
+  runtime: HandoffGuidanceRuntime,
   config: VoiceConfig,
   options: HandoffGuidanceContext,
 ): Promise<HandoffGuidance> {
   const skillName = config.handoffSkill.trim()
   const inline = config.handoffInstructions.trim()
-  const skillBody = skillName === '' ? undefined : await loadSkillBody(ctx, skillName, options)
+  const skillBody = skillName === '' ? undefined : await loadSkillBody(runtime, skillName, options)
   const sections = [skillBody, inline === '' ? undefined : inline].filter(
     (value): value is string => value !== undefined && value.trim() !== '',
   )
@@ -53,27 +63,26 @@ export async function resolveHandoffGuidance(
 }
 
 async function loadSkillBody(
-  ctx: Context,
+  runtime: HandoffGuidanceRuntime,
   skillName: string,
   options: HandoffGuidanceContext,
 ): Promise<string | undefined> {
   try {
-    // Reading an absent Cordis service throws instead of yielding undefined.
-    const skills = (ctx as { skills?: SkillRegistryLike }).skills
+    const skills = runtime.skills
     if (skills === undefined) {
-      ctx.logger?.warn?.(`[realtime-voice] handoff skill "${skillName}" is configured but the skills service is unavailable`)
+      runtime.logger?.warn?.(`[realtime-voice] handoff skill "${skillName}" is configured but the skills service is unavailable`)
       return undefined
     }
     const skill = await skills.get(skillName, {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     })
     if (skill === undefined) {
-      ctx.logger?.warn?.(`[realtime-voice] handoff skill "${skillName}" was not found`)
+      runtime.logger?.warn?.(`[realtime-voice] handoff skill "${skillName}" was not found`)
       return undefined
     }
     return typeof skill.content === 'string' && skill.content.trim() !== '' ? skill.content : undefined
   } catch (error) {
-    ctx.logger?.warn?.(
+    runtime.logger?.warn?.(
       `[realtime-voice] failed to load handoff skill "${skillName}": ${error instanceof Error ? error.message : String(error)}`,
     )
     return undefined
