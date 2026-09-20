@@ -8,7 +8,7 @@ export const VOICE_ROUTE = '/plugins/realtime-voice/v1' as const
 export const VOICE_STATUS_ROUTE = '/plugins/realtime-voice/v1/status' as const
 export const VOICE_INBOX_ROUTE = '/plugins/realtime-voice/v1/inbox' as const
 export const VOICE_PREVIEW_ROUTE = '/plugins/realtime-voice/v1/preview' as const
-export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.21' as const
+export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.22' as const
 
 /**
  * One handoff the voice surface owes the user a conversation about.

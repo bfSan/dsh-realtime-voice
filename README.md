@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.21`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
+当前版本：`0.1.0-alpha.22`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
 
 新增全局右下角「电话 · 语音总管」入口。没有打开聊天也能先通话，再选择已有任务，或明确选择项目和 Agent 创建任务。选择对象后，用户的新工作进入该任务，运行中的补充使用 DSH 的 steer；只听汇报通过只读目录与终态查询，不启动 Agent。
 
@@ -70,7 +70,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.18
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.22
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
@@ -119,7 +119,7 @@ Host 中转协议详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，客户端直连�
 
 ## 已验证
 
-- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 32 个测试文件 219 个用例全绿（含真实 Cordis `Context` 的 waterfall 顺序契约测试）
+- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 46 个测试文件 255 个用例全绿（含真实 Cordis `Context` 的 waterfall 顺序契约测试）
 - DSH `0.1.0-rc.7` 官方 CLI 本地安装、卸载、重新安装
 - 原生 3080 WebUI 插槽：安装后按钮 1 个，卸载后 0 个，重装后恢复
 - 真实 WebUI 插件配置卡：Flash/Plus 即时持久化切换；系统 Key 状态检测和 write-only 输入框正常挂载

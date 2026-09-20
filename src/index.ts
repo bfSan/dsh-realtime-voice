@@ -30,7 +30,7 @@ import { REALTIME_VOICE_SETTINGS_NAMESPACE } from './models.ts'
 import { registerDefaultHandoffSkill } from './host/handoff-skill.ts'
 import { startVoiceInbox, VoiceInbox } from './host/voice-inbox.ts'
 import type { HandoffGuidanceRuntime } from './host/handoff-guidance.ts'
-import { InboxPersistence, parseStoredInbox, type InboxGlobal } from './host/inbox-persistence.ts'
+import { InboxPersistence, voiceInboxStorageSpec, type InboxGlobal } from './host/inbox-persistence.ts'
 import { VoiceTaskDirectory, type VoiceProject, type VoiceAgent } from './host/voice-task-directory.ts'
 import { VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
 import { createVoicePreviewHandler } from './host/voice-preview-route.ts'
@@ -122,10 +122,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     let disposed = false
     let close: (() => Promise<void>) | undefined
     const setup = (async () => {
-      const domain = await storage.open({
-        name: 'realtime-voice-inbox', version: 1, tables: {},
-        global: { schema: { parse: parseStoredInbox }, initial: { schemaVersion: 1, entries: [] } },
-      })
+      const domain = await storage.open(voiceInboxStorageSpec)
       close = () => domain.close()
       if (disposed) return
       const persistence = new InboxPersistence(domain.global)
@@ -136,7 +133,8 @@ export function apply(ctx: Context, config: VoiceConfig): void {
           inbox.storageError = '回拨状态保存失败，请保留当前窗口并检查 DSH 存储。'
         })
       })
-    })().catch(() => {
+    })().catch((error: unknown) => {
+      ctx.logger.warn(`realtime voice inbox storage initialization failed: ${String(error)}`)
       inbox.storageError = '回拨历史恢复失败；原存储未覆盖。本次新回拨仍可使用。'
     })
     storageCtx.effect(() => async () => {

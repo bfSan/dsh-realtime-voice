@@ -1,19 +1,20 @@
 # 独立语音总管测试版验收
 
-版本：0.1.0-alpha.21。基线：alpha.20 / DSH 0.1.5-rc.2。
+版本：0.1.0-alpha.22。基线：alpha.21 / DSH 0.1.5-rc.2。
 
-## alpha.21 自动回归
+## alpha.22 自动回归
 
 - 不同 provider callId 收敛到同一 DSH handoff 时，只回写 Function Call 结果，不再创建新的 Qwen 响应，避免重复调用反馈循环。
 - “汇报啊”“现在什么进展”“把结果告诉我”“你查一下再告诉我”等短句进入只读结果查询；明确的“再写一份工作汇报”仍可执行。
 - 设置页新增独立音色试听：Host 读取百炼凭据，用固定短句生成 WAV；浏览器只收到音频，可停止播放，不创建 DSH 任务。
-- `pnpm test`：46 个测试文件、253 项测试通过；`pnpm build` 与 `pnpm verify` 通过。
-- 真实麦克风、真实百炼试听和长会话重复播报仍需安装 alpha.21 后人工验收。
+- 回拨队列改用 DSH 官方 `defineDomain` 与 Zod schema，存储域名改为合法的 `realtime_voice_inbox`；桌面重启后不再出现存储初始化失败。
+- `pnpm test`：46 个测试文件、255 项测试通过；`pnpm build` 与 `pnpm verify` 通过。
+- 真实麦克风、实际扬声器试听和长会话重复播报仍需安装 alpha.22 后人工验收。
 本次开发使用隔离工作树，不读取凭据明文，不修改 DSH 源码。
 
 ## 自动化证据
 
-- `pnpm test`：238 项测试（42 个文件）通过。
+- `pnpm test`：255 项测试（46 个文件）通过。
 - `pnpm build`：Host / Client 类型检查和产物构建通过。
 - `pnpm verify`：产物校验通过。
 - `git diff --check`：通过。
@@ -32,12 +33,12 @@
 | 短音频尾包、双信号交付、迟到 ACK 不串报告 | PASS | voice-audio-flow / report-delivery 测试 |
 | 仅关联取消请求的 no-active-response 被结算 | PASS | dashscope-realtime 测试；其他错误仍保留 |
 | 问题/审批回拨、口头回答、多任务切换 | PARTIAL | 原有交互回归通过，真实 Agent 待验收 |
-| 回拨存储恢复、旧审批不能恢复为可批准请求 | PARTIAL | 解析与串行存储测试通过；桌面重启持久化待验收 |
+| 回拨存储恢复、旧审批不能恢复为可批准请求 | PARTIAL | 官方存储域可在 Desktop 打开，解析与串行存储测试通过；带真实条目的跨重启恢复待验收 |
 | checkbox 与标题同排，360/600/1200px 布局 | NOT TESTED | 已改固定选择列，尚未取得桌面矩形/截图证据 |
 | 响铃时长、接听/稍后停铃 | PARTIAL | 原有定时器测试通过；扬声器听感待验收 |
 | 两套 Skill 分开、失败可见 | PASS | 解析器及配置接线；真实项目 Skill 内容待验收 |
 | 挂断后任务完成回流且不重复 | PARTIAL | 稳定终态键及播放 ACK 已接入，真实模型仍可能复述，需要人工测试 |
-| 本地安装与桌面启动 | PASS | desktop profile link 的 package.json 为 alpha.19；DSH Desktop 2.0.13 已启动，启动日志无错误 |
+| 本地安装与桌面启动 | PASS | desktop profile link 指向当前仓库；DSH Desktop 2.0.13 已启动，alpha.22 启动日志无插件错误 |
 | 最新桌面实际菜单 | NOT TESTED | Mac 已锁定；Desktop 禁止普通浏览器访问，HTTP 返回 403，未修改此设置 |
 
 ## 必须保留的边界
@@ -50,11 +51,11 @@
 
 ## 本地交付记录
 
-- 实现提交：`595e9f3`，已推送 `feat/voice-supervisor` 与 `feat/dsh-0.1.5-compat`。
+- alpha.21 基线已推送至 `feat/voice-supervisor` 与 `feat/dsh-0.1.5-compat`；alpha.22 的最终提交见对应版本标签。
 - 本地安装位置：`/Users/bofeng/Development/WorkSpace/my/AI/dsh-realtime-voice`；
   原 desktop profile link 保持不变，通过 fast-forward 同步构建产物。
-- 同步后在实际 link 目标再次运行 `pnpm test`（238/238）和 `pnpm verify`，通过。
-- 旧 `v0.1.0-alpha.18` 保留。没有重写 profile、凭据或其它项目。
+- 同步后在实际 link 目标再次运行 `pnpm test`（255/255）和 `pnpm verify`，通过。
+- 旧版本标签保留。没有重写 profile、凭据或其它项目。
 - 桌面菜单、播放听感、供应端真实连接和多任务问答仍需解锁 Mac 后验收。
 
 ## 手工回归顺序

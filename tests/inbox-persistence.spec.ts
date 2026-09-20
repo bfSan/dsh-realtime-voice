@@ -1,8 +1,14 @@
 import { expect, it, vi } from 'vitest'
-import { InboxPersistence, parseStoredInbox } from '../src/host/inbox-persistence.ts'
+import { InboxPersistence, parseStoredInbox, voiceInboxStorageSpec } from '../src/host/inbox-persistence.ts'
 
 const entry = { id: 'r1', handoffId: 'h1', sessionId: 's1', request: '测试', summary: '完成',
   status: 'completed', delivered: false, createdAt: 1, durationMs: 2 }
+
+it('declares a valid DSH storage domain for durable inbox state', () => {
+  expect(voiceInboxStorageSpec.name).toBe('realtime_voice_inbox')
+  expect(voiceInboxStorageSpec.global.schema.safeParse(null).success).toBe(false)
+  expect(voiceInboxStorageSpec.global.schema.safeParse({ schemaVersion: 1, entries: [entry] }).success).toBe(true)
+})
 
 it('preserves delivery and never restores a live approval capability', () => {
   const snapshot = parseStoredInbox({ schemaVersion: 1, entries: [
