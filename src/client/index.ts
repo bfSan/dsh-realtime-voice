@@ -24,7 +24,12 @@ import { VoiceOverlay } from './VoiceOverlay.tsx'
 import type { VoiceSettingsCardInjected } from './VoiceSettingsCard.tsx'
 import { VoiceSettingsCard } from './VoiceSettingsCard.tsx'
 
-export const inject = ['slots', 'sessions', 'remote', 'settingsScope']
+// `remote.credentials` is its own Cordis sub-service of the API gateway
+// (`remote.<namespace>`), not a plain property of `remote`. A fiber that only
+// lists `remote` cannot read it: the service resolver raises
+// `cannot get property "remote.credentials" without inject`, which the card
+// would otherwise surface as an unhelpful generic failure.
+export const inject = ['slots', 'sessions', 'remote', 'remote.credentials', 'settingsScope']
 
 /** Register one composer action and one frame overlay; both disappear with this client fiber. */
 export function apply(ctx: Context): void {

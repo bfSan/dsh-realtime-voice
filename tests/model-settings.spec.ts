@@ -89,6 +89,27 @@ describe('realtime voice model settings', () => {
     controller.dispose()
   })
 
+  it('surfaces the Host reason when the credential namespace is unreachable', async () => {
+    const scope = {
+      getSnapshot: () => ready(REALTIME_VOICE_MODELS.plus),
+      subscribe: () => () => {},
+      set: vi.fn(),
+      unset: vi.fn(),
+    } as unknown as SettingsScope<VoiceModelSettingsValue>
+    // A fiber that forgets to inject `remote.credentials` hits the service
+    // resolver, which is the failure this card must report verbatim instead of
+    // blaming the user's browser origin.
+    const controller = new VoiceModelSettingsController(
+      scope,
+      { remote: { get credentials(): never { throw new Error('cannot get property "remote.credentials" without inject') } } } as never,
+    )
+
+    await expect(controller.saveApiKey('secret')).resolves.toBe(false)
+    expect(controller.getSnapshot().apiKeySaving).toBe(false)
+    expect(controller.getSnapshot().apiKeyError).toContain('without inject')
+    controller.dispose()
+  })
+
   it('rejects malformed browser settings snapshots', () => {
     expect(decodeVoiceModelSettings({ model: REALTIME_VOICE_MODELS.flash })).toEqual({
       model: REALTIME_VOICE_MODELS.flash,

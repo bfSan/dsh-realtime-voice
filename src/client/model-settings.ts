@@ -123,8 +123,12 @@ export class VoiceModelSettingsController implements HostObservable<VoiceModelSe
         apiKeyError: configured ? undefined : '密钥写入后未能确认，请重试。',
       })
       return configured
-    } catch {
-      this.publish({ ...this.snapshot, apiKeySaving: false, apiKeyError: 'API Key 保存失败，请确认当前为本机 3080 WebUI。' })
+    } catch (error) {
+      // Keep the Host's own reason. A missing `remote.credentials` injection, a
+      // read-only credential layer and a refused write all land here, and the
+      // reason is the only thing that tells them apart.
+      const reason = error instanceof Error ? error.message : String(error)
+      this.publish({ ...this.snapshot, apiKeySaving: false, apiKeyError: `API Key 保存失败：${reason}` })
       return false
     }
   }
