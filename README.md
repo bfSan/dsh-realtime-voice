@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.16`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
+当前版本：`0.1.0-alpha.17`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
 
 本包同时声明 DSH bundle、Host 插件和“原生 WebUI 浏览器侧”插件。这里不是另做一个网站：UI 直接注入 DSH 自带的 `http://127.0.0.1:3080`，不新增页面或 UI 端口。它不修改 DSH 源码，不另起后台进程；卸载或禁用时会移除 UI/路由并关闭麦克风、音频、浏览器 WebSocket 和百炼连接，已经交给 DSH 的任务继续运行。
 
@@ -14,8 +14,8 @@ DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI �
 - “快速声学打断 / 智能语义轮次 / 智能语义轮次 v2”三档可切换；快速模式采用浏览器本地起音检测、立即停播、Host 显式取消和百炼 VAD 三层打断
 - 通话参数面板：19 个官方音色、VAD 灵敏度与静音判停（仅 `server_vad`）、上下文历史轮数、情绪增强开关，以及可编辑的“说话风格 / 人设”
 - 进度播报粒度三档可配：`仅关键节点`（默认，同一任务内按最小间隔节流并只播最新一条）、`不播报进度`、`全部播报`；审批、提问、失败和权威终态始终播报
-- 可配置的执行 Agent 汇报 Skill：设置里填一个 DSH Skill 名（默认使用插件内置的 `dsh-voice-supervisor`，项目内同名 Skill 会自动盖过它），它的正文会随每次任务交接下发，规定执行 Agent 怎么汇报、先看什么、怎么安排工作；下面还能追加一段只对本次生效的临时汇报指令
-- 语音回拨收件箱：挂断后完成的任务会保留在一个有界队列里（上限 20 条），悬浮窗变成“N 个任务已完成”的多选列表，可勾选一条或多条按顺序接听汇报；振铃 5 秒后自动停止，任务留在列表里随时可再接听
+- 可配置的执行 Agent 汇报 Skill：设置里填一个 DSH Skill 名（可显式填插件内置的 `dsh-voice-supervisor`，项目内同名 Skill 会自动盖过它），或直接填一个 markdown 文件路径；默认不启用，填了才随每次任务交接下发，规定执行 Agent 怎么汇报、先看什么、怎么安排工作；下面还能追加一段只对本次生效的临时汇报指令
+- 语音回拨收件箱：挂断后完成的任务会保留在一个有界队列里（上限 20 条），悬浮窗变成“N 个任务已完成”的列表，每行自带「接听 / 已读 / 稍后」，也可勾选多条按顺序一次汇报；振铃时长在设置里可调（0 表示不响），未接听的记录留在列表里随时可再接听
 - 自动识别 `DASHSCOPE_API_KEY`，也可在插件设置中通过 DSH 官方 credentials 安全写入或替换；浏览器不可回读明文
 - 默认低延迟 `server_vad`（阈值 0.35、静音 500ms），可选 `smart_turn` / `smart_turn_v2`；实时转写、流式 PCM 播放、用户全双工打断
 - 实时优先的语义交接：Qwen Audio Realtime 立即处理自然对话；只有文件、应用、设备、项目、联网、打印等真实工作才通过官方 Function Calling 交给 DSH，不靠关键词或正则脚本触发
@@ -64,7 +64,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.16
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.17
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
@@ -86,7 +86,9 @@ dsh plugin --profile web remove @harness-remote/dsh-realtime-voice
 
 `0.1.0-alpha.11` 修正浏览器侧 fiber 的服务注入：`remote.credentials` 是网关为每个 namespace 单独注册的 `remote.<namespace>` 子服务，只声明 `remote` 时解析器会抛 `cannot get property "remote.credentials" without inject`。此前这个异常被吞掉并统一显示成“请确认当前为本机 3080 WebUI”，导致插件设置里保存百炼 Key 时误报；现在按 Cordis 要求显式注入该子服务，失败时也会原样透出 Host 的原因。
 
-`0.1.0-alpha.16` 补上最初设想里缺失的两块：一是“这个执行 Agent 该怎么汇报”，二是“任务在我挂断之后完成，怎么叫我回来听”。前者把 DSH 原生 Skill 机制接进语义交接——设置里填的 Skill 正文会随 `<realtime_delegation>` 一起下发，作用范围是这一次任务而不是整个会话的常驻提示；插件同时内置 `dsh-voice-supervisor` 作为默认范本，项目内同名 Skill 会按 DSH 的层级规则覆盖它。后者新增 root 生命周期的回拨收件箱：它订阅插件本来就有的全局 session 事件流，但只为本次语音真正交接过的任务建记录，所以同一个 DSH 实例里其它会话的结束不会出现在列表里。用户勾选多条时可以按顺序一次汇报完，振铃 5 秒后自动停止，未接听的记录留在列表里。
+`0.1.0-alpha.16` 补上最初设想里缺失的两块：一是“这个执行 Agent 该怎么汇报”，二是“任务在我挂断之后完成，怎么叫我回来听”。前者把 DSH 原生 Skill 机制接进语义交接——设置里填的 Skill 正文会随 `<realtime_delegation>` 一起下发，作用范围是这一次任务而不是整个会话的常驻提示；插件同时内置 `dsh-voice-supervisor` 作为默认范本，项目内同名 Skill 会按 DSH 的层级规则覆盖它；最新版把它改成**默认不启用**，字段同时接受 DSH Skill 名或一个 markdown 文件路径。后者新增 root 生命周期的回拨收件箱：它订阅插件本来就有的全局 session 事件流，但只为本次语音真正交接过的任务建记录，所以同一个 DSH 实例里其它会话的结束不会出现在列表里。用户勾选多条时可以按顺序一次汇报完，未接听的记录留在列表里。
+
+`0.1.0-alpha.17` 修掉真实使用中暴露的四个问题。内置 Skill 此前根本无法加载：`ctx.skills.register()` 只补 `invocation` 与 `provider`，而注册表在 `get()` 时会重新校验完整定义，所以缺 `source` 的定义注册时通过、读取时抛 `loaded skill ... source must be a string`。现在定义自带 `source`，并有测试断言重新校验所读的每个字段都存在。汇报指导改为默认关闭、且既能填 Skill 名也能填 markdown 文件路径（支持 `~`，会自动剥掉 frontmatter）。振铃时长进入设置（0 表示不响，上限 60 秒）。回拨列表改为每行自带「接听 / 已读 / 稍后」，并修掉勾选不可用的根因：悬浮窗拖拽守卫只豁免了 `button`，`preventDefault()` 取消了 checkbox 的默认切换，`setPointerCapture` 又把指针抢走，所以勾选永远不生效。
 
 为把依赖面收敛在插件内部、避免触碰 DSH 源码或污染其它 profile，迁移集中在新增的 `src/host/dsh-runtime-compat.ts`：它在 Host 侧以 `ctx.provide('apiProxy', …)` 装回一层兼容门面，把新事件流翻译成原有帧协议，其余业务代码保持不变。`inject` 列表已同步去掉 `apiProxy`。
 
@@ -102,7 +104,7 @@ Host 中转协议详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，客户端直连�
 
 ## 已验证
 
-- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 29 个测试文件 190 个用例全绿
+- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 29 个测试文件 197 个用例全绿
 - DSH `0.1.0-rc.7` 官方 CLI 本地安装、卸载、重新安装
 - 原生 3080 WebUI 插槽：安装后按钮 1 个，卸载后 0 个，重装后恢复
 - 真实 WebUI 插件配置卡：Flash/Plus 即时持久化切换；系统 Key 状态检测和 write-only 输入框正常挂载

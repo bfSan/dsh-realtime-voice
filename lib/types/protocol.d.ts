@@ -6,7 +6,7 @@ export declare const VOICE_PROTOCOL_VERSION: 1;
 export declare const VOICE_ROUTE: "/plugins/realtime-voice/v1";
 export declare const VOICE_STATUS_ROUTE: "/plugins/realtime-voice/v1/status";
 export declare const VOICE_INBOX_ROUTE: "/plugins/realtime-voice/v1/inbox";
-export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.16";
+export declare const VOICE_WEB_CLIENT_VERSION: "0.1.0-alpha.17";
 /** One finished handoff waiting to be reported back to the user by voice. */
 export interface VoiceInboxEntry {
     id: string;
