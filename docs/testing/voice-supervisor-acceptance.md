@@ -29,7 +29,8 @@
 | 响铃时长、接听/稍后停铃 | PARTIAL | 原有定时器测试通过；扬声器听感待验收 |
 | 两套 Skill 分开、失败可见 | PASS | 解析器及配置接线；真实项目 Skill 内容待验收 |
 | 挂断后任务完成回流且不重复 | PARTIAL | 稳定终态键及播放 ACK 已接入，真实模型仍可能复述，需要人工测试 |
-| 最新桌面实际加载与菜单 | NOT TESTED | 开发时 DSH Desktop 未运行，Mac 已锁定 |
+| 本地安装与桌面启动 | PASS | desktop profile link 的 package.json 为 alpha.19；DSH Desktop 2.0.13 已启动，启动日志无错误 |
+| 最新桌面实际菜单 | NOT TESTED | Mac 已锁定；Desktop 禁止普通浏览器访问，HTTP 返回 403，未修改此设置 |
 
 ## 必须保留的边界
 
@@ -38,6 +39,15 @@
 - 未做 ChatGPT 跨应用执行桥。
 - 语音交付确认不是内容语义验证；真实模型的汇报准确性仍需人工验收。
 - 旧 Web/Direct 绑定模式不自动升级为独立总管，Direct 不支持新目录工具。
+
+## 本地交付记录
+
+- 实现提交：`595e9f3`，已推送 `feat/voice-supervisor` 与 `feat/dsh-0.1.5-compat`。
+- 本地安装位置：`/Users/bofeng/Development/WorkSpace/my/AI/dsh-realtime-voice`；
+  原 desktop profile link 保持不变，通过 fast-forward 同步构建产物。
+- 同步后在实际 link 目标再次运行 `pnpm test`（238/238）和 `pnpm verify`，通过。
+- 旧 `v0.1.0-alpha.18` 保留。没有重写 profile、凭据或其它项目。
+- 桌面菜单、播放听感、供应端真实连接和多任务问答仍需解锁 Mac 后验收。
 
 ## 手工回归顺序
 
