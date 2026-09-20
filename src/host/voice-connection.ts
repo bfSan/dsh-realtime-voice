@@ -40,7 +40,7 @@ import { buildVoiceInstructions, VOICE_FUNCTION_TOOLS } from './voice-bootstrap.
 import { ProgressAnnouncementGate } from './progress-gate.ts'
 import { ProgressAnnouncementCoalescer } from './progress-coalescer.ts'
 import { resolveHandoffGuidance, type HandoffGuidanceRuntime } from './handoff-guidance.ts'
-import type { VoiceInbox } from './voice-inbox.ts'
+import type { VoiceInbox, VoiceInboxEntry } from './voice-inbox.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
@@ -58,6 +58,8 @@ interface VoiceAnnouncementEntry {
   text: string
   body: string
   kind: 'status' | 'complete'
+  /** One DSH turn: the unit one paragraph must never be repeated inside. */
+  group: string
 }
 
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
@@ -263,14 +265,25 @@ export class VoiceConnection {
     if (inbox === undefined) return
     const selected = inbox.list().filter(entry => entryIds.includes(entry.id))
     if (selected.length === 0) return
-    inbox.markDelivered(selected.map(entry => entry.id))
+    // A pending interaction is not a report: it stays listed until it is
+    // actually answered, because marking it delivered would hide a card the
+    // Agent is still blocked on.
+    const reports = selected.filter(entry => entry.kind !== 'needs-input')
+    if (reports.length > 0) inbox.markDelivered(reports.map(entry => entry.id))
+    const pending = selected.filter(entry => entry.kind === 'needs-input')
+    if (pending.length > 0) {
+      this.deliverPendingInteractions(pending)
+      if (reports.length === 0) return
+    }
     const ordered = entryIds
       .map(id => selected.find(entry => entry.id === id))
       .filter((entry): entry is (typeof selected)[number] => entry !== undefined)
+      .filter(entry => entry.kind !== 'needs-input')
+    if (ordered.length === 0) return
     // The provider truncates an injected announcement, so divide the budget
     // across the selection instead of letting the last reports fall off.
     const perEntryBudget = Math.max(120, Math.floor(3_400 / ordered.length))
-    const reports = ordered.map((entry, index) => {
+    const summary = ordered.map((entry, index) => {
       const tag = entry.status === 'completed' ? 'COMPLETE' : entry.status === 'cancelled' ? 'CANCELLED' : 'FAILED'
       const title = entry.sessionTitle === undefined ? '' : `，来自任务「${entry.sessionTitle}」`
       return `${index + 1}. [${tag}]${title}：${entry.summary.slice(0, perEntryBudget)}`
@@ -278,14 +291,53 @@ export class VoiceConnection {
     const single = ordered.length === 1
     this.progressCoalescer.settle({
       id: `inbox_${ordered.map(entry => entry.id).join('_')}`,
-      text: `[COMPLETE] 用户挂断后完成的任务结果，共 ${ordered.length} 条：\n${reports}\n${
+      text: `[COMPLETE] 用户挂断后完成的任务结果，共 ${ordered.length} 条：\n${summary}\n${
         single
           ? '这是用户刚从回拨列表里选中的任务。请用一两句话汇报结论，不要重复提交这个任务。'
           : '这些是用户刚从回拨列表里按顺序选中的任务。请按顺序逐条用一两句话汇报结论，不要重复提交这些任务。'
       }`,
-      body: reports,
+      body: summary,
       kind: 'complete',
+      // Each call-back is its own reporting event; two selections may carry
+      // identical text without being the same announcement.
+      group: `inbox_${ordered.map(entry => entry.id).join('_')}`,
     })
+  }
+
+  /**
+   * Re-arm a pending approval or question the user is ringing back to answer.
+   *
+   * The live call that first owned this interaction is gone, so its coordinator
+   * forgot it. The interaction itself is still held by the compat shim, which
+   * is what `answer_dsh_*` ultimately responds through; re-registering it here
+   * is what lets the voice answer travel back to the blocked Agent.
+   */
+  private deliverPendingInteractions(entries: readonly VoiceInboxEntry[]): void {
+    const inbox = this.inbox
+    const coordinator = this.coordinator
+    if (inbox === undefined || coordinator === undefined) return
+    for (const entry of entries) {
+      if (entry.interactionId === undefined) continue
+      const interaction = inbox.pendingInteraction(entry.interactionId)
+      if (interaction === undefined) {
+        // Nothing is holding it any more, so the card is stale.
+        inbox.resolveNeedsInput(entry.interactionId)
+        continue
+      }
+      if (interaction.kind === 'approval') {
+        coordinator.rememberApproval(interaction.approval)
+        this.provider?.announceBackendEvent(
+          `backend_ringback_approval_${entry.interactionId}`,
+          `[NEEDS_APPROVAL] DSH 正在等待用户批准。approval_id=${interaction.approval.approvalId}；工具=${interaction.approval.toolName}；原因=${interaction.approval.reason ?? '未提供'}。请简短说明风险并询问用户是否允许一次。用户明确同意或拒绝后，必须调用 answer_dsh_approval；不要把回答当成新任务。`,
+        )
+        continue
+      }
+      coordinator.rememberQuestion(interaction.question)
+      this.provider?.announceBackendEvent(
+        `backend_ringback_question_${entry.interactionId}`,
+        `[NEEDS_INPUT] DSH Agent 需要用户作决定。request_id=${interaction.question.rpcId}。问题：${formatQuestions(interaction.question)}。请自然地询问用户；得到明确答案后调用 answer_dsh_question，不要把答案当作新任务。`,
+      )
+    }
   }
 
   private async start(hello: VoiceHello): Promise<void> {
@@ -706,11 +758,13 @@ export class VoiceConnection {
             // gate's surviving key nodes become speech; the browser UI still
             // receives every summary above.
             if (this.progressGate.decide()) {
+              const group = `${frame.sessionId}:${turn}`
               this.progressCoalescer.offer({
                 id: `backend_progress_${event.seq}`,
                 text: `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
                 body: text,
                 kind: 'status',
+                group,
               })
             }
           }
@@ -759,6 +813,7 @@ export class VoiceConnection {
           text: `${completionTag} ${resultText}\n这是绑定 DSH 任务的权威终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
           body: resultText,
           kind: 'complete',
+          group: key,
         })
       }
     })().catch((error: unknown) => {
@@ -816,6 +871,7 @@ export class VoiceConnection {
         const text = assistantByTurn.get(data.turn)
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
+        const group = `${sessionId}:${data.turn}`
         this.send({
           type: 'voice.agent-status',
           serverSeq: this.nextSeq(),
@@ -823,10 +879,17 @@ export class VoiceConnection {
           running: coordinator.active,
           ...(text === undefined ? {} : { summary: text.slice(0, 1_200) }),
         })
-        this.provider?.announceBackendEvent(
-          `backend_recovered_complete_${String(typed.seq ?? data.turn)}`,
-          `${completionTag} ${resultText}\n这是重连后从 DSH 权威历史恢复的终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
-        )
+        // Recovered history travels through the same coalescer as the live
+        // stream. Announcing it directly gave the identical report a second
+        // announcement id, so a reconnect that replayed a turn the call had
+        // already spoken repeated it verbatim.
+        this.progressCoalescer.settle({
+          id: `backend_recovered_complete_${String(typed.seq ?? data.turn)}`,
+          text: `${completionTag} ${resultText}\n这是重连后从 DSH 权威历史恢复的终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
+          body: resultText,
+          kind: 'complete',
+          group,
+        })
       }
       // History may include older completed turns. Re-read the authoritative
       // current session flag after folding it so an old terminal cannot make a

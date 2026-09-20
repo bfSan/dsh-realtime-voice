@@ -73,6 +73,15 @@ export declare class VoiceConnection {
      * would silently drop the tail of a long selection.
      */
     private deliverInboxEntries;
+    /**
+     * Re-arm a pending approval or question the user is ringing back to answer.
+     *
+     * The live call that first owned this interaction is gone, so its coordinator
+     * forgot it. The interaction itself is still held by the compat shim, which
+     * is what `answer_dsh_*` ultimately responds through; re-registering it here
+     * is what lets the voice answer travel back to the blocked Agent.
+     */
+    private deliverPendingInteractions;
     private start;
     private onProviderEvent;
     /** Execute only the small semantic bridge vocabulary exposed to Qwen. */

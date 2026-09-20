@@ -172,8 +172,23 @@ export interface LegacyHistoryRecord {
   event: unknown
 }
 
-type ApprovalAnswerer = (outcome: 'allowed-once' | 'rejected') => void
-type QuestionAnswerer = (value: unknown) => void
+/**
+ * One interaction the voice surface is holding.
+ *
+ * `delegate` settles the promise as a failure so the waterfall's catch hands
+ * the request back to the normal browser answerer. That is the exit hatch for
+ * "user dismissed the ring-back instead of answering by voice": without it the
+ * Agent would wait on a card nobody owns.
+ */
+interface HeldApproval {
+  resolve(outcome: 'allowed-once' | 'rejected'): void
+  delegate(): void
+}
+
+interface HeldQuestion {
+  resolve(value: unknown): void
+  delegate(): void
+}
 
 // Structural view of the two scoped waterfall requests this bridge answers.
 interface InteractionRequestLike {
@@ -223,29 +238,54 @@ export interface InstallCompatOptions {
   // Restricts interaction waterfalls to sessions that currently own a voice
   // call. Outside a call the browser keeps its own approval and question UI.
   isVoiceSession?: (sessionId: string) => boolean
+  /**
+   * Sessions with an outstanding voice handoff.
+   *
+   * A handoff outlives the call that started it, so a question raised after
+   * the user hung up must still reach the voice surface - that is the only way
+   * they can learn the Agent is blocked. The voice surface owns the answer
+   * here, exactly as it does during a live call.
+   */
+  watchesHandoff?: (sessionId: string) => boolean
   // Overrides the registered service name; used by tests.
   serviceName?: string
 }
 
+/** Handle on the interaction routing this shim installed. */
+export interface CompatInteractionControl {
+  /**
+   * Hand one pending interaction back to the normal browser surface.
+   *
+   * Called when the user dismisses a ring-back instead of answering it by
+   * voice: the Agent must not wait forever on a card nobody owns.
+   */
+  delegateInteraction(interactionId: string): boolean
+}
+
 // Install the compatibility service on the calling fiber. Registration is an
 // effect, so unloading the plugin removes the shim with everything else.
-export function installApiProxyCompat(ctx: Context, options: InstallCompatOptions = {}): void {
+export function installApiProxyCompat(ctx: Context, options: InstallCompatOptions = {}): CompatInteractionControl {
   const serviceName = options.serviceName ?? 'apiProxy'
+  const control: CompatInteractionControl = {
+    delegateInteraction: () => false,
+  }
   ctx.inject(['sessionController'], (sessionCtx) => {
     const controller = getService<SessionControllerLike>(sessionCtx, 'sessionController')
     if (controller === undefined) {
       ctx.logger.warn('[realtime-voice] sessionController is unavailable; voice host bridge is disabled')
       return
     }
-    const approvals = new Map<string, ApprovalAnswerer>()
-    const questions = new Map<string, QuestionAnswerer>()
+    const approvals = new Map<string, HeldApproval>()
+    const questions = new Map<string, HeldQuestion>()
     const hub = new LiveEventHub(sessionCtx, {
       controller,
       approvals,
       questions,
       ...(options.isVoiceSession === undefined ? {} : { isVoiceSession: options.isVoiceSession }),
+      ...(options.watchesHandoff === undefined ? {} : { watchesHandoff: options.watchesHandoff }),
     })
     hub.start()
+    control.delegateInteraction = interactionId => hub.delegateInteraction(interactionId)
 
     const ok = <T>(value: T): LegacyResult<T> => ({ result: { ok: true, value } })
     const fail = <T>(error: unknown): LegacyResult<T> => ({ result: { ok: false, error: { message: errorText(error) } } })
@@ -315,13 +355,13 @@ export function installApiProxyCompat(ctx: Context, options: InstallCompatOption
           approvals.delete(envelope.rpcId)
           const outcome = approvalOutcomeOf(envelope.result)
           if (outcome === undefined) return { accepted: false, reason: 'unsupported approval outcome' }
-          approval(outcome)
+          approval.resolve(outcome)
           return { accepted: true }
         }
         const question = questions.get(envelope.rpcId)
         if (question !== undefined) {
           questions.delete(envelope.rpcId)
-          question(questionAnswersOf(envelope.result))
+          question.resolve(questionAnswersOf(envelope.result))
           return { accepted: true }
         }
         return { accepted: false, reason: 'response is no longer pending' }
@@ -331,15 +371,18 @@ export function installApiProxyCompat(ctx: Context, options: InstallCompatOption
     ctx.provide(serviceName, apiProxy as never)
     ctx.effect(() => () => {
       hub.stop()
+      control.delegateInteraction = () => false
     }, 'realtime-voice: legacy event hub lifecycle')
   })
+  return control
 }
 
 interface HubServices {
   controller: SessionControllerLike
-  approvals: Map<string, ApprovalAnswerer>
-  questions: Map<string, QuestionAnswerer>
+  approvals: Map<string, HeldApproval>
+  questions: Map<string, HeldQuestion>
   isVoiceSession?: ((sessionId: string) => boolean) | undefined
+  watchesHandoff?: ((sessionId: string) => boolean) | undefined
 }
 
 // One fan-out of the current runtime's Cordis events and control stream into
@@ -380,6 +423,17 @@ class LiveEventHub {
     // Approvals and questions are scoped waterfalls. Voice joins the same
     // chain the browser uses, but only while it owns a call for that session;
     // otherwise it defers so the normal DSH UI answers.
+    //
+    // `prepend` is load-bearing, not an optimization. `waterfall` runs
+    // listeners outermost-first in registration order and a listener that does
+    // not call `next()` vetoes the rest of the chain. The desktop profile
+    // loads `dsh-web-app` before this plugin, and `@deepseek-ai/dsh-api-remotes`
+    // registers the browser answerer from there, so without `prepend` the
+    // browser claims every request first and parks it on a surface the user
+    // walked away from. Prepending only changes order: a session voice does
+    // not own still falls straight through to the browser answerer via
+    // `next()` below.
+    //
     // Arrow listeners keep `this` bound to the hub: Cordis binds each listener
     // to its dispatch context, which would otherwise replace the instance.
     this.disposers.push(this.ctx.on('approval/request', (async (
@@ -387,10 +441,10 @@ class LiveEventHub {
       next: () => Promise<unknown>,
     ): Promise<unknown> => {
       const sessionId = agentSessionId(request)
-      if (sessionId === undefined || !this.ownsVoice(sessionId)) return next()
+      if (sessionId === undefined || !this.ownsInteraction(sessionId)) return next()
       const rpcId = randomUUID()
-      const pending = new Promise<'allowed-once' | 'rejected'>((resolve) => {
-        this.services.approvals.set(rpcId, resolve)
+      const pending = new Promise<'allowed-once' | 'rejected'>((resolve, reject) => {
+        this.services.approvals.set(rpcId, { resolve, delegate: () => reject(new Error('voice interaction delegated')) })
       })
       this.pushMux({
         type: 'approval/requested',
@@ -408,17 +462,17 @@ class LiveEventHub {
       } catch {
         return next()
       }
-    }) as never))
+    }) as never, { prepend: true }))
 
     this.disposers.push(this.ctx.on('user-questions/request', (async (
       request: UserQuestionRequestLike,
       next: () => Promise<unknown>,
     ): Promise<unknown> => {
       const sessionId = agentSessionId(request)
-      if (sessionId === undefined || !this.ownsVoice(sessionId)) return next()
+      if (sessionId === undefined || !this.ownsInteraction(sessionId)) return next()
       const rpcId = randomUUID()
-      const pending = new Promise<unknown>((resolve) => {
-        this.services.questions.set(rpcId, resolve)
+      const pending = new Promise<unknown>((resolve, reject) => {
+        this.services.questions.set(rpcId, { resolve, delegate: () => reject(new Error('voice interaction delegated')) })
       })
       this.pushMux({
         type: 'question/requested',
@@ -433,7 +487,7 @@ class LiveEventHub {
       } catch {
         return next()
       }
-    }) as never))
+    }) as never, { prepend: true }))
   }
 
   stop(): void {
@@ -458,9 +512,40 @@ class LiveEventHub {
     return this.subscribe(this.muxQueues, signal)
   }
 
-  private ownsVoice(sessionId: string): boolean {
+  /**
+   * Give one held interaction back to the normal browser answerer.
+   *
+   * @returns whether the interaction was still pending under this hub.
+   */
+  delegateInteraction(interactionId: string): boolean {
+    const approval = this.services.approvals.get(interactionId)
+    if (approval !== undefined) {
+      this.services.approvals.delete(interactionId)
+      approval.delegate()
+      return true
+    }
+    const question = this.services.questions.get(interactionId)
+    if (question !== undefined) {
+      this.services.questions.delete(interactionId)
+      question.delegate()
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Voice answers an interaction when it owns the live call, and also when it
+   * still holds an outstanding handoff for that session.
+   *
+   * The second case is what makes a ring-back possible: the user hung up, the
+   * Agent kept working, and it now blocks on a decision. Answering as the
+   * browser would leave the pending card waiting on a surface nobody is
+   * watching once the voice surface has already listed it for ring-back.
+   */
+  private ownsInteraction(sessionId: string): boolean {
     try {
       return this.services.isVoiceSession?.(sessionId) === true
+        || this.services.watchesHandoff?.(sessionId) === true
     } catch {
       return false
     }

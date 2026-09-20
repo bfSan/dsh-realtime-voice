@@ -2,7 +2,7 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.17`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
+当前版本：`0.1.0-alpha.18`，目标 DSH：`0.1.5-rc.2`（同时保留对 `0.1.0-rc.7` 的行为语义）。
 
 本包同时声明 DSH bundle、Host 插件和“原生 WebUI 浏览器侧”插件。这里不是另做一个网站：UI 直接注入 DSH 自带的 `http://127.0.0.1:3080`，不新增页面或 UI 端口。它不修改 DSH 源码，不另起后台进程；卸载或禁用时会移除 UI/路由并关闭麦克风、音频、浏览器 WebSocket 和百炼连接，已经交给 DSH 的任务继续运行。
 
@@ -64,7 +64,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.17
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.18
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
@@ -90,6 +90,15 @@ dsh plugin --profile web remove @harness-remote/dsh-realtime-voice
 
 `0.1.0-alpha.17` 修掉真实使用中暴露的四个问题。内置 Skill 此前根本无法加载：`ctx.skills.register()` 只补 `invocation` 与 `provider`，而注册表在 `get()` 时会重新校验完整定义，所以缺 `source` 的定义注册时通过、读取时抛 `loaded skill ... source must be a string`。现在定义自带 `source`，并有测试断言重新校验所读的每个字段都存在。汇报指导改为默认关闭、且既能填 Skill 名也能填 markdown 文件路径（支持 `~`，会自动剥掉 frontmatter）。振铃时长进入设置（0 表示不响，上限 60 秒）。回拨列表改为每行自带「接听 / 已读 / 稍后」，并修掉勾选不可用的根因：悬浮窗拖拽守卫只豁免了 `button`，`preventDefault()` 取消了 checkbox 的默认切换，`setPointerCapture` 又把指针抢走，所以勾选永远不生效。
 
+`0.1.0-alpha.18` 接着修四件事，其中两件是 alpha.17 之后才暴露出的真 bug：
+
+- **DSH 提问时不回拨**，根因是 Cordis `waterfall` 的注册顺序。它按注册顺序“最外层先跑”，谁不调用 `next()` 谁就否决后面的链；每次部署固定先加载 `dsh-base` 与 `dsh-web-app`，而浏览器审批应答者正是从 `dsh-api-remotes` 注册的，所以插件后注册、永远排在它后面，请求被浏览器接走并停在没人看的那个界面上。现在这两个监听器用 `{ prepend: true }` 排到链首，只改顺序：不属于语音的会话照样 `next()` 透传回浏览器。测试改用真实 Cordis `Context` 而不是假 emitter，因为假 emitter 根本复现不出这个顺序。
+- **通话中提问、未答就挂断会永久卡住 Agent**。活通话期间这类交互被有意抑制，避免“正在问你的时候又给你打电话”，但抑制用的是一次性的丢弃。现在改为延后保留：通话一结束，同一个问题立刻变成回拨条目，口头答案照旧能回到那个卡住的任务。
+- **接听 / 已读 / 稍后点不动**：拖拽守卫在窗口收成悬浮球（`collapsed`）时跳过了交互控件豁免，于是 `preventDefault()` 加 `setPointerCapture()` 把整个列表的点击都吃掉了。现在只有悬浮球自身保留拖拽。
+- **响铃时长不生效**：振铃 effect 依赖数组身份，两秒一次的状态轮询一刷新就触发 cleanup，铃声被立刻掐断，而且因为已标记过不会再重排。改成命令式持有铃铛，轮询不再打断它。
+
+同一版还收敛了终态重复播报：同一段话会经 `assistant/message`（`backend_progress_*`）与紧随其后的 `turn/end`（`backend_complete_*`）两条通道各播一次，二者间隔实测只有 1–4ms，而重连后的历史回填又是第三个 id 命名空间。`ProgressAnnouncementCoalescer` 现在按「会话 + turn」成组，在时间窗内对同一条正文做内容级去重，三条通道因此收敛成一次播报，不同任务里的相同文本仍会各自播报。
+
 为把依赖面收敛在插件内部、避免触碰 DSH 源码或污染其它 profile，迁移集中在新增的 `src/host/dsh-runtime-compat.ts`：它在 Host 侧以 `ctx.provide('apiProxy', …)` 装回一层兼容门面，把新事件流翻译成原有帧协议，其余业务代码保持不变。`inject` 列表已同步去掉 `apiProxy`。
 
 构建与测试现状见下方“已验证”；`pnpm build` 与 `pnpm test` 在 `0.1.5-rc.2` 依赖下全绿。
@@ -104,7 +113,7 @@ Host 中转协议详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，客户端直连�
 
 ## 已验证
 
-- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 29 个测试文件 197 个用例全绿
+- DSH `0.1.5-rc.2` 依赖树下的 Host/Client 双层 TypeScript 编译、打包与 32 个测试文件 219 个用例全绿（含真实 Cordis `Context` 的 waterfall 顺序契约测试）
 - DSH `0.1.0-rc.7` 官方 CLI 本地安装、卸载、重新安装
 - 原生 3080 WebUI 插槽：安装后按钮 1 个，卸载后 0 个，重装后恢复
 - 真实 WebUI 插件配置卡：Flash/Plus 即时持久化切换；系统 Key 状态检测和 write-only 输入框正常挂载

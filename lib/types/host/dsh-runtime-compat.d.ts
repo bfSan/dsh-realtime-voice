@@ -241,7 +241,26 @@ export interface LegacyApiProxy {
 }
 export interface InstallCompatOptions {
     isVoiceSession?: (sessionId: string) => boolean;
+    /**
+     * Sessions with an outstanding voice handoff.
+     *
+     * A handoff outlives the call that started it, so a question raised after
+     * the user hung up must still reach the voice surface - that is the only way
+     * they can learn the Agent is blocked. The voice surface owns the answer
+     * here, exactly as it does during a live call.
+     */
+    watchesHandoff?: (sessionId: string) => boolean;
     serviceName?: string;
 }
-export declare function installApiProxyCompat(ctx: Context, options?: InstallCompatOptions): void;
+/** Handle on the interaction routing this shim installed. */
+export interface CompatInteractionControl {
+    /**
+     * Hand one pending interaction back to the normal browser surface.
+     *
+     * Called when the user dismisses a ring-back instead of answering it by
+     * voice: the Agent must not wait forever on a card nobody owns.
+     */
+    delegateInteraction(interactionId: string): boolean;
+}
+export declare function installApiProxyCompat(ctx: Context, options?: InstallCompatOptions): CompatInteractionControl;
 export {};

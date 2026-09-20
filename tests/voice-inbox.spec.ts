@@ -27,6 +27,42 @@ function turnEnd(sessionId: string, turn: number, kind = 'completed') {
   } as never
 }
 
+function approvalRequested(sessionId: string, approvalId: string, toolName = 'exec_command') {
+  return {
+    rpcId: 'rpc',
+    payload: {
+      type: 'approval/requested',
+      rpcId: 'rpc-approval',
+      sessionId,
+      approvalId,
+      toolName,
+      reason: '需要访问打印机',
+    },
+  } as never
+}
+
+function questionRequested(sessionId: string, rpcId: string) {
+  return {
+    rpcId: 'rpc',
+    payload: {
+      type: 'question/requested',
+      rpcId,
+      sessionId,
+      questions: [{
+        id: 'q1',
+        question: '要保留旧文件吗？',
+        options: [{ label: '保留' }, { label: '删除' }],
+      }],
+    },
+  } as never
+}
+
+function resolved(frame: 'approval' | 'question', id: string) {
+  return frame === 'approval'
+    ? { rpcId: 'rpc', payload: { type: 'approval/resolved', sessionId: 'session-1', approvalId: id, outcome: 'allowed-once' } } as never
+    : { rpcId: 'rpc', payload: { type: 'question/resolved', sessionId: 'session-1', questionRpcId: id, outcome: 'answered' } } as never
+}
+
 describe('voice call-back inbox', () => {
   it('queues nothing for sessions the voice surface never delegated to', () => {
     const inbox = new VoiceInbox()
@@ -159,5 +195,126 @@ describe('voice call-back inbox', () => {
       rpcId: 'r',
       payload: { type: 'host/session-status', sessionId: 's', running: true },
     } as never)).not.toThrow()
+  })
+})
+
+describe('pending interactions reach the ring-back list', () => {
+  it('lists an approval the Agent raised while no call was active', () => {
+    const inbox = new VoiceInbox()
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: '打印机任务', sessionTitle: '打印' })
+
+    const entry = inbox.observe(approvalRequested('session-1', 'approval-1'))
+    expect(entry).toMatchObject({
+      status: 'needs-input',
+      kind: 'needs-input',
+      interactionId: 'approval-1',
+      sessionTitle: '打印',
+    })
+    // The prompt must be speakable as-is: this is what the voice surface reads.
+    expect(entry!.summary).toContain('exec_command')
+    expect(inbox.pendingInteraction('approval-1')).toMatchObject({ kind: 'approval' })
+  })
+
+  it('lists a question and keeps every option for the spoken answer', () => {
+    const inbox = new VoiceInbox()
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: '清理目录' })
+
+    const entry = inbox.observe(questionRequested('session-1', 'question-1'))
+    expect(entry).toMatchObject({ status: 'needs-input', interactionId: 'question-1' })
+    expect(entry!.summary).toContain('要保留旧文件吗？')
+    expect(entry!.summary).toContain('保留')
+    expect(inbox.pendingInteraction('question-1')).toMatchObject({ kind: 'question' })
+  })
+
+  it('drops the entry once the interaction is answered', () => {
+    const inbox = new VoiceInbox()
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: 'A' })
+    inbox.observe(questionRequested('session-1', 'question-1'))
+    expect(inbox.list()).toHaveLength(1)
+
+    inbox.observe(resolved('question', 'question-1'))
+    expect(inbox.list()).toEqual([])
+    expect(inbox.pendingInteraction('question-1')).toBeUndefined()
+  })
+
+  it('does not list an interaction a live call is already speaking', () => {
+    const inbox = new VoiceInbox()
+    inbox.setIsLiveCall(sessionId => sessionId === 'session-1')
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: 'A' })
+
+    expect(inbox.observe(approvalRequested('session-1', 'approval-1'))).toBeUndefined()
+    expect(inbox.list()).toEqual([])
+  })
+
+  it('hands a dismissed pending interaction back to the browser surface', () => {
+    const inbox = new VoiceInbox()
+    const delegated: string[] = []
+    inbox.setDelegateInteraction(id => delegated.push(id))
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: 'A' })
+    const entry = inbox.observe(questionRequested('session-1', 'question-1'))!
+
+    inbox.dismiss([entry.id])
+    // Otherwise the Agent would wait forever on a card nobody owns.
+    expect(delegated).toEqual(['question-1'])
+    expect(inbox.list()).toEqual([])
+  })
+
+  it('lists a question again once the call that was asking it has ended', () => {
+    const inbox = new VoiceInbox()
+    let live = true
+    inbox.setIsLiveCall(() => live)
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: '清理目录' })
+
+    // On the call the question is spoken out loud, so the list stays quiet.
+    const asked = inbox.observe(questionRequested('session-1', 'question-1'))
+    expect(asked).toBeUndefined()
+    expect(inbox.list()).toEqual([])
+
+    // The user hangs up without answering. The Agent is still blocked, and the
+    // voice surface is the only place that can reach them, so the question has
+    // to become exactly what it would have been had they never called.
+    live = false
+    expect(inbox.list()).toMatchObject([{
+      status: 'needs-input',
+      kind: 'needs-input',
+      interactionId: 'question-1',
+    }])
+    // The spoken answer must still be routable back to the blocked Agent.
+    expect(inbox.pendingInteraction('question-1')).toMatchObject({ kind: 'question' })
+  })
+
+  it('does not resurrect a question the user answered before hanging up', () => {
+    const inbox = new VoiceInbox()
+    let live = true
+    inbox.setIsLiveCall(() => live)
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: '清理目录' })
+    inbox.observe(questionRequested('session-1', 'question-1'))
+
+    // Answered out loud while still on the call, then the user hangs up.
+    inbox.observe(resolved('question', 'question-1'))
+    live = false
+    expect(inbox.list()).toEqual([])
+    expect(inbox.pendingInteraction('question-1')).toBeUndefined()
+  })
+
+  it('does not list a deferred question twice across polls', () => {
+    const inbox = new VoiceInbox()
+    let live = true
+    inbox.setIsLiveCall(() => live)
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: '清理目录' })
+    inbox.observe(questionRequested('session-1', 'question-1'))
+    live = false
+
+    // `list()` drives the two-second presence poll, so it must be idempotent.
+    expect(inbox.list()).toHaveLength(1)
+    expect(inbox.list()).toHaveLength(1)
+  })
+
+  it('never lists the same interaction twice', () => {
+    const inbox = new VoiceInbox()
+    inbox.watch({ handoffId: 'h-1', sessionId: 'session-1', request: 'A' })
+    expect(inbox.observe(approvalRequested('session-1', 'approval-1'))).toBeDefined()
+    expect(inbox.observe(approvalRequested('session-1', 'approval-1'))).toBeUndefined()
+    expect(inbox.list()).toHaveLength(1)
   })
 })

@@ -1,6 +1,6 @@
 import type { HostObservable, InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { realtimeVoiceModelLabel, realtimeVoiceTurnDetectionLabel } from '../models.ts'
 import type { VoiceQuestionAnswer } from '../protocol.ts'
 import type { VoiceInboxEntry } from '../protocol.ts'
@@ -88,30 +88,58 @@ export function VoiceOverlay({
   const waiting = (voice.inbox ?? []).filter(entry => !entry.delivered)
   const snoozed = voice.snoozedInbox ?? []
   const rungRef = useRef<Set<string>>(new Set())
-  // A snoozed report stays listed but must not ring again when the list
-  // re-renders, so it counts as already offered.
-  const newWaitingIds = waiting
-    .map(entry => entry.id)
-    .filter(id => !rungRef.current.has(id) && !snoozed.includes(id))
+  // The bell is owned imperatively: React re-renders every two seconds (the
+  // presence poll), so an effect cleanup would tear the ring down within one
+  // poll and the configured length would never be heard.
+  const ringRef = useRef<{ stop: () => void; timer: ReturnType<typeof setTimeout> }>()
+  const stopRing = useCallback(() => {
+    const ringing = ringRef.current
+    if (ringing === undefined) return
+    ringRef.current = undefined
+    clearTimeout(ringing.timer)
+    ringing.stop()
+  }, [])
+  // Keyed on ids rather than array identity for the same reason: each poll
+  // hands back a brand new array of the same reports.
+  const waitingKey = waiting.map(entry => entry.id).join(',')
+  const snoozedKey = snoozed.join(',')
 
   useEffect(() => {
-    if (voice.phase !== 'idle' || newWaitingIds.length === 0) return
-    for (const id of newWaitingIds) rungRef.current.add(id)
+    if (voice.phase !== 'idle') {
+      stopRing()
+      return
+    }
+    // A snoozed report stays listed but must not ring again, so it counts as
+    // already offered.
+    const fresh = waiting.filter(entry => !rungRef.current.has(entry.id) && !snoozed.includes(entry.id))
+    if (fresh.length === 0) return
+    for (const entry of fresh) rungRef.current.add(entry.id)
+    // A bell already ringing for an earlier report is left to finish; restarting
+    // it on every new arrival would cut the configured length short again.
+    if (ringRef.current !== undefined) return
     const stop = playRingtone(ringDurationMs)
     if (stop === undefined) return
     // When the bell stops, the call falls back to "稍后"; the task stays in
     // the list either way, so a missed ring never loses a report.
-    const timer = setTimeout(stop, ringDurationMs)
-    return () => {
-      clearTimeout(timer)
+    const timer = setTimeout(() => {
+      ringRef.current = undefined
       stop()
-    }
+    }, ringDurationMs)
+    ringRef.current = { stop, timer }
     // Only the arrival of a new report may ring: dismissing one row, or
     // finishing a call, must not restart the bell for rows already offered.
-    // Snooze is an explicit local deferral: it must not be re-armed by a
-    // later render, so the dependency list deliberately omits `snoozed`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newWaitingIds.join(','), voice.phase, ringDurationMs])
+  }, [waitingKey, snoozedKey, voice.phase, ringDurationMs, stopRing])
+
+  // Unmounting the call surface must not leave an oscillator running.
+  useEffect(() => stopRing, [stopRing])
+
+  // "稍后" is the explicit "stop ringing at me" gesture, so it silences the
+  // bell immediately instead of waiting out the configured length.
+  useEffect(() => {
+    if (snoozedKey !== '') stopRing()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snoozedKey, stopRing])
 
   useEffect(() => {
     if (voice.phase === 'requesting-permission') setCollapsed(false)
@@ -147,12 +175,14 @@ export function VoiceOverlay({
     }
   }, [collapsed, voice.phase])
 
-  const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
+  const beginDrag = (event: ReactPointerEvent<HTMLElement>, allowFromControl = false) => {
     if (event.button !== 0 || panelRef.current === null) return
-    // Any interactive control owns its own pointer: exempting only `button`
-    // silently ate checkbox clicks, because `preventDefault()` below cancels
-    // the default toggle and `setPointerCapture` then steals the gesture.
-    if (!collapsed && (event.target as Element).closest(INTERACTIVE_SELECTOR) !== null) return
+    // Any interactive control owns its own pointer: `preventDefault()` below
+    // cancels the default action and `setPointerCapture` then steals the
+    // gesture, which silently ate every button in the call-back list. Only the
+    // collapsed orb keeps dragging from its own button, because the orb has no
+    // other grab surface.
+    if (!allowFromControl && (event.target as Element).closest(INTERACTIVE_SELECTOR) !== null) return
     const rect = panelRef.current.getBoundingClientRect()
     dragRef.current = {
       pointerId: event.pointerId,
@@ -231,7 +261,7 @@ export function VoiceOverlay({
         style={floatingStyle}
         data-phase={voice.phase}
         aria-label={`实时语音：${phaseText(voice.phase)}`}
-        onPointerDown={beginDrag}
+        onPointerDown={event => beginDrag(event, true)}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
@@ -454,7 +484,13 @@ function CallBackList(props: {
           <div className={styles.eyebrow}>DSH 实时语音</div>
           <div className={styles.phaseLine}>
             <span className={styles.ringDot} />
-            {props.waiting.length} 个任务已完成，等待汇报
+            {pendingCount(props.waiting) === 0
+              ? `${props.waiting.length} 个任务已完成，等待汇报`
+              : `${pendingCount(props.waiting)} 个问题等你回答${
+                props.waiting.length - pendingCount(props.waiting) === 0
+                  ? ''
+                  : `，另有 ${props.waiting.length - pendingCount(props.waiting)} 个任务可汇报`
+              }`}
           </div>
         </div>
         <button
@@ -491,7 +527,7 @@ function CallBackList(props: {
                   type="button"
                   className={styles.rowAnswer}
                   onClick={() => props.onAnswerOne(entry.id)}
-                >接听</button>
+                >{entry.kind === 'needs-input' ? '回答' : '接听'}</button>
                 <button type="button" className={styles.rowAction} onClick={() => props.onDismiss([entry.id])}>已读</button>
                 <button type="button" className={styles.rowAction} onClick={() => props.onSnooze(entry.id)}>稍后</button>
               </div>
@@ -527,6 +563,7 @@ function CallBackList(props: {
 function inboxStatusText(status: VoiceInboxEntry['status']): string {
   if (status === 'completed') return '已完成'
   if (status === 'cancelled') return '已取消'
+  if (status === 'needs-input') return '等待你回答'
   return '失败'
 }
 
@@ -542,6 +579,11 @@ function inboxDurationText(durationMs: number): string {
   const seconds = Math.round(durationMs / 1_000)
   if (seconds < 60) return `耗时 ${seconds} 秒`
   return `耗时 ${Math.round(seconds / 60)} 分钟`
+}
+
+/** How many listed entries are blocked on the user rather than reporting a result. */
+function pendingCount(entries: readonly VoiceInboxEntry[]): number {
+  return entries.filter(entry => entry.kind === 'needs-input').length
 }
 
 function phaseText(phase: VoiceSnapshot['phase']): string {

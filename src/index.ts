@@ -75,6 +75,10 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   ctx.inject(['apiProxy'], (inboxCtx) => {
     inboxCtx.effect(() => startVoiceInbox(inboxCtx, inbox), 'realtime-voice: call-back inbox lifecycle')
   })
+  // A live call already speaks its own approvals and questions, so the inbox
+  // must stay quiet about those and list only what the user missed.
+  inbox.setIsLiveCall(sessionId => voiceRuntime.ownsSession(sessionId))
+  inbox.setDelegateInteraction(interactionId => { interactions.delegateInteraction(interactionId) })
 
   // Settings are optional at the Cordis boundary. When the Web profile serves
   // them, model changes become authoritative for the next accepted call; an
@@ -89,7 +93,13 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   // DSH 0.1.5 deleted the `apiProxy` service and the Session/Typert runtime the
   // rc.7 host bridge was written against. Reinstall the exact surface the rest
   // of this plugin consumes, backed by the current authoritative runtime.
-  installApiProxyCompat(ctx, { isVoiceSession: sessionId => voiceRuntime.ownsSession(sessionId) })
+  const interactions = installApiProxyCompat(ctx, {
+    isVoiceSession: sessionId => voiceRuntime.ownsSession(sessionId),
+    // A handoff outlives the call that started it: a question raised after the
+    // user hung up must still reach the voice surface, or the Agent blocks on
+    // a decision nobody can see.
+    watchesHandoff: sessionId => inbox.watchesSession(sessionId),
+  })
 
   const authorizeUpgrade = (request: IncomingMessage, socket: Duplex): VoiceConfig | undefined => {
     const activeConfig = readConfig()

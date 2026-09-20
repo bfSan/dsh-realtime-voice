@@ -7,17 +7,35 @@ export const VOICE_PROTOCOL_VERSION = 1 as const
 export const VOICE_ROUTE = '/plugins/realtime-voice/v1' as const
 export const VOICE_STATUS_ROUTE = '/plugins/realtime-voice/v1/status' as const
 export const VOICE_INBOX_ROUTE = '/plugins/realtime-voice/v1/inbox' as const
-export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.17' as const
+export const VOICE_WEB_CLIENT_VERSION = '0.1.0-alpha.18' as const
 
-/** One finished handoff waiting to be reported back to the user by voice. */
+/**
+ * One handoff the voice surface owes the user a conversation about.
+ *
+ * `report` entries carry a finished turn. `needs-input` entries carry a
+ * pending approval or question, which is how a user who already hung up can
+ * still learn that the Agent is blocked waiting on them.
+ */
 export interface VoiceInboxEntry {
   id: string
   handoffId: string
   sessionId: string
   sessionTitle?: string
   request: string
+  /** Assistant text for a report; the spoken prompt for a pending interaction. */
   summary: string
-  status: 'completed' | 'failed' | 'cancelled'
+  status: 'completed' | 'failed' | 'cancelled' | 'needs-input'
+  /**
+   * What this entry asks of the user. Absent means `report`, so a client that
+   * predates the field keeps rendering the list correctly.
+   */
+  kind?: 'report' | 'needs-input'
+  /**
+   * DSH correlation id of the pending interaction, present only for
+   * `needs-input`. The voice surface answers against it directly, which is
+   * what lets a ring-back answer reach the blocked Agent.
+   */
+  interactionId?: string
   createdAt: number
   /** Wall-clock duration of the delegated turn, used to skip trivial tasks. */
   durationMs: number
