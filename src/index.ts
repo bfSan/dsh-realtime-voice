@@ -31,6 +31,8 @@ import { registerDefaultHandoffSkill } from './host/handoff-skill.ts'
 import { startVoiceInbox, VoiceInbox } from './host/voice-inbox.ts'
 import type { HandoffGuidanceRuntime } from './host/handoff-guidance.ts'
 import { InboxPersistence, voiceInboxStorageSpec, type InboxGlobal } from './host/inbox-persistence.ts'
+import { ButlerRegistry } from './host/butler-registry.ts'
+import { butlerStorageSpec, parseStoredButlers } from './host/butler-persistence.ts'
 import { VoiceTaskDirectory, type VoiceProject, type VoiceAgent } from './host/voice-task-directory.ts'
 import { VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
 import { createVoicePreviewHandler } from './host/voice-preview-route.ts'
@@ -73,10 +75,12 @@ export function apply(ctx: Context, config: VoiceConfig): void {
   const connections = new Set<{ dispose(reason?: string): void }>()
   const voiceRuntime = new VoiceRuntime()
   const inbox = new VoiceInbox()
+  const butlers = new ButlerRegistry()
   const directoryServices: {
     projects?: () => Promise<VoiceProject[]>
     agents?: () => Promise<VoiceAgent[]>
     controller?: Context['sessionController']
+    butlers?: ButlerRegistry
   } = {}
   ctx.inject(['workspaceRegistry'], registryCtx => {
     const registry = (registryCtx as unknown as { workspaceRegistry: { list(): VoiceProject[] } }).workspaceRegistry
@@ -120,10 +124,11 @@ export function apply(ctx: Context, config: VoiceConfig): void {
       open(spec: unknown): Promise<{ global: InboxGlobal; close(): Promise<void> }>
     } }).storageDomain
     let disposed = false
-    let close: (() => Promise<void>) | undefined
+    let closeInbox: (() => Promise<void>) | undefined
+    let closeButlers: (() => Promise<void>) | undefined
     const setup = (async () => {
       const domain = await storage.open(voiceInboxStorageSpec)
-      close = () => domain.close()
+      closeInbox = () => domain.close()
       if (disposed) return
       const persistence = new InboxPersistence(domain.global)
       const stored = await persistence.load()
@@ -137,11 +142,27 @@ export function apply(ctx: Context, config: VoiceConfig): void {
       ctx.logger.warn(`realtime voice inbox storage initialization failed: ${String(error)}`)
       inbox.storageError = '回拨历史恢复失败；原存储未覆盖。本次新回拨仍可使用。'
     })
+    const butlerSetup = (async () => {
+      const domain = await storage.open(butlerStorageSpec)
+      closeButlers = () => domain.close()
+      if (disposed) return
+      butlers.restore(parseStoredButlers(domain.global.get()))
+      directoryServices.butlers = butlers
+      butlers.setOnChange(() => {
+        void domain.global.set(butlers.snapshot() as never).catch(() => {})
+      })
+    })().catch((error: unknown) => {
+      ctx.logger.warn(`realtime voice butler roster initialization failed: ${String(error)}`)
+    })
     storageCtx.effect(() => async () => {
       disposed = true
       inbox.setOnChange(undefined)
+      butlers.setOnChange(undefined)
+      delete directoryServices.butlers
       await setup
-      await close?.()
+      await butlerSetup
+      await closeInbox?.()
+      await closeButlers?.()
     }, 'realtime-voice: durable inbox')
   })
   let readConfig = (): VoiceConfig => config

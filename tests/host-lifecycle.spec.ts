@@ -85,6 +85,33 @@ describe('Host plugin lifecycle', () => {
     expect(wrongMethod.status).toBe(405)
   })
 
+  it('opens the durable inbox and butler roster domains', async () => {
+    const opened: string[] = []
+    const storage = {
+      open: async (spec: { name: string }) => {
+        opened.push(spec.name)
+        return {
+          global: { get: () => ({ schemaVersion: 1, butlers: [] }), set: async () => {} },
+          close: async () => {},
+        }
+      },
+    }
+    const injections = new Map<string, (ctx: unknown) => void>()
+    const context = {
+      webServer: { register: vi.fn(() => vi.fn()), registerUpgrade: vi.fn(() => vi.fn()) },
+      effect: vi.fn((factory: () => () => void | Promise<void>) => { factory() }),
+      logger: { warn: vi.fn() },
+      inject: vi.fn((services: string[], callback: (ctx: unknown) => void) => {
+        for (const service of services) injections.set(service, callback)
+      }),
+    }
+    apply(context as never, config)
+    const storageInjection = injections.get('storageDomain')
+    expect(storageInjection).toBeTypeOf('function')
+    storageInjection?.({ storageDomain: storage, effect: () => {} })
+    await vi.waitFor(() => expect(opened).toEqual(['realtime_voice_inbox', 'realtime_voice_butlers']))
+  })
+
   it('registers the built-in reporting skill once the skills service is injected', () => {
     const register = vi.fn(() => vi.fn())
     const injections = new Map<string, (ctx: unknown) => void>()

@@ -65,6 +65,11 @@ function trimTasks(tasks: readonly ButlerTaskRef[]): ButlerTaskRef[] {
 export class ButlerRegistry {
   private readonly butlers = new Map<string, VoiceButler>()
   private defaultButler: string | undefined
+  private onChange: (() => void) | undefined
+
+  setOnChange(listener: (() => void) | undefined): void { this.onChange = listener }
+
+  private changed(): void { this.onChange?.() }
 
   create(name: string): VoiceButler {
     const id = slugify(name, new Set(this.butlers.keys()))
@@ -75,6 +80,7 @@ export class ButlerRegistry {
     }
     this.butlers.set(id, butler)
     this.defaultButler ??= id
+    this.changed()
     return butler
   }
 
@@ -82,6 +88,7 @@ export class ButlerRegistry {
     const butler = this.require(id)
     butler.name = name.trim() || butler.name
     butler.lastUsedAt = Date.now()
+    this.changed()
     return butler
   }
 
@@ -94,12 +101,14 @@ export class ButlerRegistry {
   remove(id: string): boolean {
     const deleted = this.butlers.delete(id)
     if (deleted && this.defaultButler === id) this.defaultButler = [...this.butlers.keys()][0]
+    if (deleted) this.changed()
     return deleted
   }
 
   setDefault(id: string): void {
     this.require(id)
     this.defaultButler = id
+    this.changed()
   }
 
   defaultId(): string | undefined { return this.defaultButler }
@@ -120,12 +129,14 @@ export class ButlerRegistry {
       ...task, lastSummary: task.lastSummary.slice(0, MAX_BUTLER_SUMMARY_LENGTH),
     }])
     butler.lastUsedAt = Date.now()
+    this.changed()
   }
 
   setScope(id: string, scope: ButlerScope): void {
     const butler = this.require(id)
     butler.scope = { ...butler.scope, ...scope }
     butler.lastUsedAt = Date.now()
+    this.changed()
   }
 
   addNote(id: string, note: string): void {
@@ -133,6 +144,7 @@ export class ButlerRegistry {
     const notes = [note.trim(), ...butler.memory.notes].filter(row => row.length > 0)
     butler.memory.notes = notes.slice(0, MAX_BUTLER_NOTES)
     butler.lastUsedAt = Date.now()
+    this.changed()
   }
 
   snapshot(): StoredButlers {
