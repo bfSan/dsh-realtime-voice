@@ -31,6 +31,14 @@ export declare class VoiceConnection {
      * the user has not created yet) must still let the call through.
      */
     private butlerBriefing;
+    /**
+     * The butler answering right now.
+     *
+     * Read from the supervisor when one exists, because a mid-call
+     * `switch_voice_butler` moves the answerer: the lease keeps the original
+     * id, but the voice the user hears must be the new one.
+     */
+    private currentButler;
     private userTurnSequence;
     private reportReadOnly;
     private readonly provisionalId;

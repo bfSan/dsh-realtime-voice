@@ -48,12 +48,17 @@ export interface StoredButlers {
 }
 
 /**
- * The slice of the roster a live call needs. Kept narrow so a connection can
- * hold the registry itself while still resolving the butler at call time.
+ * The slice of the roster a live call needs: resolving who answers, naming who
+ * exists, and writing the scope and todos a butler is told to remember. Narrow
+ * on purpose, so a test can hand the supervisor a stub instead of the whole
+ * storage-backed class.
  */
 export interface ButlerRoster {
   get(id: string): VoiceButler | undefined
   resolveDefault(): VoiceButler | undefined
+  list(): readonly VoiceButler[]
+  setScope(id: string, scope: ButlerScope): void
+  addNote(id: string, note: string): void
 }
 
 function slugify(name: string, taken: ReadonlySet<string>): string {

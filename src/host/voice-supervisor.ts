@@ -1,4 +1,5 @@
 import { parseSupervisorArguments } from '../supervisor-protocol.ts'
+import { buildButlerBriefing, type ButlerRoster } from './butler-registry.ts'
 import type { VoiceTaskDirectory } from './voice-task-directory.ts'
 import { isReadOnlyReportIntent } from './voice-intent.ts'
 
@@ -20,9 +21,19 @@ export class VoiceSupervisor {
     private readonly callId: string,
     private readonly directory: VoiceTaskDirectory,
     private readonly actions: SupervisorActions,
+    private readonly butlers?: ButlerRoster,
     butlerId?: string,
   ) {
     this.butlerId = butlerId
+  }
+  private require<R>(value: R | undefined, message: string): R {
+    if (value === undefined) throw new Error(message)
+    return value
+  }
+  /** The butler answering right now: the named one, or the roster default. */
+  private currentButler() {
+    if (this.butlers === undefined) return undefined
+    return this.butlerId === undefined ? this.butlers.resolveDefault() : this.butlers.get(this.butlerId)
   }
   userTurn(id: string, text: string): void {
     if (text.trim()) this.turn = { id, text: text.trim() }
@@ -49,6 +60,36 @@ export class VoiceSupervisor {
       case 'select_voice_task':
         await this.select(args.taskId!)
         return { status: 'selected', taskId: this.selectedTask }
+      case 'list_voice_butlers': {
+        // The roster never blocks a call: without one there is simply nobody
+        // to hand the call to, and the model must say so rather than invent.
+        if (this.butlers === undefined) return { butlers: [] }
+        return {
+          butlers: this.butlers.list().map(butler => ({
+            id: butler.id, name: butler.name, scope: butler.scope, pending: butler.memory.notes,
+          })),
+          ...(this.currentButler() === undefined ? {} : { current: this.currentButler()!.id }),
+        }
+      }
+      case 'switch_voice_butler': {
+        const registry = this.require(this.butlers, '语音总管名单不可用')
+        const next = registry.get(args.butlerId!)
+        if (next === undefined) throw new Error('语音总管不存在，请先从名单里选一位')
+        ;(this as { butlerId: string | undefined }).butlerId = next.id
+        return { status: 'switched', butler: { id: next.id, name: next.name }, briefing: buildButlerBriefing(next) }
+      }
+      case 'remember_voice_scope': {
+        const registry = this.require(this.butlers, '语音总管名单不可用')
+        const butler = this.require(this.currentButler(), '当前没有接听的语音总管')
+        registry.setScope(butler.id, { keywords: [args.note!.slice(0, 200)] })
+        return { status: 'remembered', butlerId: butler.id }
+      }
+      case 'note_voice_todo': {
+        const registry = this.require(this.butlers, '语音总管名单不可用')
+        const butler = this.require(this.currentButler(), '当前没有接听的语音总管')
+        registry.addNote(butler.id, args.note!)
+        return { status: 'noted', butlerId: butler.id }
+      }
       case 'create_voice_task': {
         if (!this.turn || isReadOnlyReportIntent(this.turn.text)) return { status: 'needs-clarification', message: '请先询问用户要创建什么任务、使用哪个项目和 Agent。' }
         const task = await this.directory.createTask({

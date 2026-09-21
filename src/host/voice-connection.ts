@@ -90,10 +90,20 @@ export class VoiceConnection {
    */
   private butlerBriefing(): string {
     if (!this.supervisorMode || this.butlers === undefined) return ''
-    const butler = this.butlerId === undefined
-      ? this.butlers.resolveDefault()
-      : this.butlers.get(this.butlerId)
+    const butler = this.currentButler()
     return butler === undefined ? '' : buildButlerBriefing(butler)
+  }
+  /**
+   * The butler answering right now.
+   *
+   * Read from the supervisor when one exists, because a mid-call
+   * `switch_voice_butler` moves the answerer: the lease keeps the original
+   * id, but the voice the user hears must be the new one.
+   */
+  private currentButler() {
+    if (this.butlers === undefined) return undefined
+    const id = this.supervisor?.butlerId ?? this.butlerId
+    return id === undefined ? this.butlers.resolveDefault() : this.butlers.get(id)
   }
   private userTurnSequence = 0
   private reportReadOnly = false
@@ -496,7 +506,7 @@ export class VoiceConnection {
           return result.output
         },
         cancel: async () => this.coordinator?.cancel(),
-      }, this.butlerId)
+      }, this.butlers, this.butlerId)
       if (this.continuity.supervisorTaskId) await this.supervisor.select(this.continuity.supervisorTaskId)
     }
     const status: { running: boolean; blank: boolean; cwd?: string; title?: string; summary?: string } = this.supervisorMode
