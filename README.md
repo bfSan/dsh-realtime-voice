@@ -2,9 +2,11 @@
 
 DeepSeek Harness 官方插件形态的实时语音 Agent：安装后在 WebUI 输入框旁出现拨打按钮，用户可持续对话、打断播报、询问进度，并用语音启动、追加、纠正或停止当前 DSH Agent 工作。
 
-当前版本：`0.1.0-alpha.22`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
+当前版本：`0.1.0-alpha.23`，目标 DSH：`0.1.5-rc.2`。这是独立语音总管测试版，真实麦克风与桌面交互验收状态见 [验收记录](docs/testing/voice-supervisor-acceptance.md)。
 
-新增全局右下角「电话 · 语音总管」入口。没有打开聊天也能先通话，再选择已有任务，或明确选择项目和 Agent 创建任务。选择对象后，用户的新工作进入该任务，运行中的补充使用 DSH 的 steer；只听汇报通过只读目录与终态查询，不启动 Agent。
+右下角是一个拨号球：单击即接通默认语音总管，长按约半秒或右键才打开选择/新建总管的面板。没有打开聊天也能先通话，再选择已有任务，或明确选择项目和 Agent 创建任务。选择对象后，用户的新工作进入该任务，运行中的补充使用 DSH 的 steer；只听汇报通过只读目录与终态查询，不启动 Agent。
+
+语音总管是可以任意创建的多位身份，各自记住自己的负责范围和跟进事项。点名接通某一位时，只有它的身份、范围和上次跟进内容会进入实时模型；通话中可以说“换成写作来接”，接听者随之更换。总管名单持久化在 DSH storage domain `realtime_voice_butlers`。
 
 「设置 → 插件 → DSH 实时语音」现在分开配置「执行 Agent 汇报指导」与「语音总管沟通指导」。两组均可留空，也支持 Skill 名称或 markdown 路径。项目 Skill 需要先选择任务，加载失败在通话界面显示提示。语音总管默认先确认汇报对象，不把“汇报啊”扩写为创建或合并文件。
 
@@ -70,7 +72,7 @@ dsh plugin --profile web add .
 从本 fork 安装当前版本：
 
 ```powershell
-dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.22
+dsh plugin --profile web add github:bfSan/dsh-realtime-voice#v0.1.0-alpha.23
 ```
 
 发布包会提交预构建 `lib/`，不使用会触发 pnpm `allowBuilds` 的 `prepare`，以保持一条命令安装。
