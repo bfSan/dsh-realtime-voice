@@ -29,13 +29,15 @@
 
 ### 拨号
 
-右下角常态只有一个圆形拨号球，不含文字标签。单击球即呼叫默认管家并接通；长按或右键才打开高级面板（选择已有总管、新建总管、查看/接管某个已有任务）；全局快捷键唤起同一动作，通话中再按一次即挂断。
+右下角常态只有一个圆形拨号球，不含文字标签。单击球即呼叫默认管家并接通；长按或右键才打开高级面板（选择已有总管、新建总管、查看/接管某个已有任务）。
+
+全局快捷键**第一期不绑定**：设置里预留一个可配置的快捷键字段（含「未设置」态），但不注册任何默认组合，避免与输入法或系统快捷键冲突。未设置时拨号只有拨号球一个入口。
 
 通话中浮窗顶部显示当前管家称呼与状态；管家自报身份一句：「我是 XX，上次帮你做了 YY」。用户可随时口头切换：「换小李」「让上次那位接」「新开一个叫运维的总管」，对应的工具调用见下。挂断即结束通话，不影响 DSH 中正在运行的任务。
 
 ### 新总管
 
-高级面板「新安排一位总管」只要求一个称呼，其余全部口头补齐。新总管的默认音色与实时模型继承全局配置，默认执行 Agent 为空（首次交接前口头确认），负责范围与跟进列表为空。
+高级面板「新安排一位总管」只要求一个称呼，其余全部口头补齐。新总管的音色、实时模型、说话风格与用户偏好**第一期全部共用全局配置**：数据模型保留 `voice`、`stylePrompt`、`preferences` 字段，但不提供设置 UI、不写入、不读取，渲染一律回落到全局配置。默认执行 Agent 为空（首次交接前口头确认），负责范围与跟进列表为空。
 
 ### 通话内容
 
@@ -43,21 +45,23 @@
 
 ## 数据模型
 
-新增 stability domain `realtime_voice_butlers`，与 inbox 同法用 `defineDomain` + Zod schema 声明（domain 名必须匹配 `^[a-z][a-z0-9_]*$`）。单 global 槽，禁止 null：
+新增 storage domain `realtime_voice_butlers`，与 inbox 同法用 `defineDomain` + Zod schema 声明（domain 名必须匹配 `^[a-z][a-z0-9_]*$`）。单 global 槽，禁止 null：
 
 ```text
 schemaVersion: 1
 butlers: [{
-  id, name, voice?, createdAt, lastUsedAt,
-  scope: {projects?: string[], keywords?: string[], defaultAgentPresetId?: string},
-  memory: {tasks: [{sessionId, title, projectId?, presetId?, lastTouchedAt, lastSummary}], notes: string[]},
+  id, name, createdAt, lastUsedAt,
+  // 第一期保留字段，全部留空并由全局配置回落；不提供 UI
+  voice?, stylePrompt?, preferences?,
+  scope: { projects?: string[], keywords?: string[], defaultAgentPresetId?: string },
+  memory: { tasks: [{ sessionId, title, projectId?, presetId?, lastTouchedAt, lastSummary }], notes: string[] },
 }]
 defaultButlerId
 ```
 
 约束：`tasks` 上限 20 条按最近使用淘汰；`id` 稳定 slug；删除管家只删注册记录，不动其 DSH 会话。旧版本缺失字段按可选处理并走兼容版本，不新建第二个域。
 
-每位管家的 `<realtime_delegation>` 注入自己的身份、负责范围、跟进任务摘要，以及用户偏好（表达粒度、是否念文件名）。会话史实始终以 DSH 为唯一权威记录；这里的 `memory` 只是索引与摘要。
+每位管家的 `<realtime_delegation>` 注入自己的身份、负责范围、跟进任务摘要。第一期不注入 per-butler 音色/风格/偏好：这些字段存在但为空，一律回落全局 `voice`、`stylePrompt` 与底座规则。
 
 ## 协议增量
 
@@ -94,4 +98,5 @@ defaultButlerId
 
 - 插件没有自己的会话史实，管家摘要可能过时；因此必须允许用户在口头更正，并让管家重写摘要。
 - 多位管家共享一份执行 Agent 配额，切换不换模型、不换权限。
-- 与相较旧入口：聊天框内的拨号按钮仍绑定当前会话，两者语义不同，UI 需标明「打给总管」而非「打给当前会话」。
+- UI 测试：第一期不绑定快捷键时，拨号仅由拨号球触发；设置了快捷键字段后仍不改变默认行为。
+- 与旧入口的关系：聊天框内的拨号按钮仍绑定当前会话，两者语义不同，UI 需标明「打给总管」而非「打给当前会话」。
