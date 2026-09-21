@@ -11,6 +11,8 @@ export interface SupervisorActions {
 /** One call routes to explicitly selected DSH tasks; the page's current chat is irrelevant. */
 export class VoiceSupervisor {
   selectedTask: string | undefined
+  /** Which butler answers this call; undefined means the roster default. */
+  readonly butlerId: string | undefined
   private turn: { id: string; text: string } | undefined
   private selecting = false
   private readonly receipts = new Map<string, { fingerprint: string; result: Promise<unknown> }>()
@@ -18,7 +20,10 @@ export class VoiceSupervisor {
     private readonly callId: string,
     private readonly directory: VoiceTaskDirectory,
     private readonly actions: SupervisorActions,
-  ) {}
+    butlerId?: string,
+  ) {
+    this.butlerId = butlerId
+  }
   userTurn(id: string, text: string): void {
     if (text.trim()) this.turn = { id, text: text.trim() }
   }

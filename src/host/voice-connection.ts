@@ -53,7 +53,11 @@ import { isReadOnlyReportIntent } from './voice-intent.ts'
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
 const BROWSER_AUDIO_SEND_TIMEOUT_MS = 15_000
+/** Lease target when no butler is named; kept distinct from any DSH session. */
 const SUPERVISOR_LEASE_TARGET = 'voice-supervisor'
+export function supervisorLeaseTarget(butlerId: string | undefined): string {
+  return butlerId === undefined ? SUPERVISOR_LEASE_TARGET : `${SUPERVISOR_LEASE_TARGET}:${butlerId}`
+}
 
 /**
  * DSH repeats the final answer on the `turn/end` that follows its
@@ -75,6 +79,7 @@ interface VoiceAnnouncementEntry {
 export class VoiceConnection {
   private supervisorMode = false
   private supervisor: VoiceSupervisor | undefined
+  private butlerId: string | undefined
   private userTurnSequence = 0
   private reportReadOnly = false
   private readonly provisionalId = randomUUID()
@@ -257,7 +262,12 @@ export class VoiceConnection {
       if (this.hello !== undefined) throw new Error('voice.hello may only be sent once')
       if (!this.directory) throw new Error('语音总管目录不可用')
       this.supervisorMode = true
-      await this.start({ ...parsed, protocol: VOICE_PROTOCOL, target: { sessionId: SUPERVISOR_LEASE_TARGET } })
+      this.butlerId = parsed.butlerId
+      await this.start({
+        ...parsed,
+        protocol: VOICE_PROTOCOL,
+        target: { sessionId: supervisorLeaseTarget(parsed.butlerId) },
+      })
       if (parsed.target) await this.supervisor?.select(parsed.target.sessionId)
       return
     }
@@ -470,7 +480,7 @@ export class VoiceConnection {
           return result.output
         },
         cancel: async () => this.coordinator?.cancel(),
-      })
+      }, this.butlerId)
       if (this.continuity.supervisorTaskId) await this.supervisor.select(this.continuity.supervisorTaskId)
     }
     const status: { running: boolean; blank: boolean; cwd?: string; title?: string; summary?: string } = this.supervisorMode
