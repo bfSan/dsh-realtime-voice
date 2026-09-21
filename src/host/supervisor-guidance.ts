@@ -1,5 +1,17 @@
 import { looksLikeGuidancePath, resolveHandoffGuidance, type HandoffGuidanceRuntime } from './handoff-guidance.ts'
 
+/**
+ * Always-on, never configurable. A butler persona may change the tone, but it
+ * can never buy back the right to read file paths aloud, to repeat a report,
+ * or to decide an authorization on the user's behalf.
+ */
+export const SUPERVISOR_BASE_GUIDANCE = [
+  '不要念绝对路径、命令、文件清单或代码；用口语指代，必要时说“第二份文档”。',
+  '一次最多两句，先说结论或要问的那个问题。',
+  '同一件事不汇报两次；不需要用户动作时明确说“你不用管”。',
+  '不替用户决定需要授权的操作，改动文件前必须得到用户口头确认。',
+].join('\n')
+
 export const DEFAULT_SUPERVISOR_GUIDANCE = [
   '你是语音总管，负责与用户交流、确认对象、安排工作和根据事实汇报。',
   '先确认汇报对象。用户说“汇报”“汇报啊”时，先查询任务列表和权威结果；多个候选时问一句要听哪一个。',
@@ -14,17 +26,19 @@ export const DEFAULT_SUPERVISOR_GUIDANCE = [
 ].join('\n')
 
 export async function resolveSupervisorGuidance(
-  options: { skill: string; instructions: string; cwd?: string },
+  options: { skill: string; instructions: string; butlerBriefing: string; cwd?: string },
   runtime: HandoffGuidanceRuntime,
 ): Promise<{ body: string; source: string; status: 'default' | 'loaded' | 'error'; error?: string }> {
   const skill = options.skill.trim()
-  if (skill && !looksLikeGuidancePath(skill) && !options.cwd) {
-    return { body: DEFAULT_SUPERVISOR_GUIDANCE, source: skill, status: 'error', error: '请先选择项目以加载语音总管 Skill，或使用文件绝对路径。' }
-  }
   const config = { handoffSkill: skill, handoffInstructions: options.instructions }
   const guidance = await resolveHandoffGuidance(runtime, config, options.cwd === undefined ? {} : { cwd: options.cwd })
   return {
-    body: [DEFAULT_SUPERVISOR_GUIDANCE, guidance.body].filter(Boolean).join('\n\n'),
+    body: [
+      SUPERVISOR_BASE_GUIDANCE,
+      DEFAULT_SUPERVISOR_GUIDANCE,
+      options.butlerBriefing.trim(),
+      guidance.body,
+    ].filter(Boolean).join('\n\n'),
     source: skill || 'built-in',
     status: guidance.missingSkill ? 'error' : skill || options.instructions.trim() ? 'loaded' : 'default',
     ...(guidance.missingSkill ? { error: '语音总管 Skill 加载失败，使用默认沟通规则。请检查名称或文件路径。' } : {}),

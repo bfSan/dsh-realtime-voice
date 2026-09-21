@@ -47,6 +47,15 @@ export interface StoredButlers {
   defaultButlerId?: string
 }
 
+/**
+ * The slice of the roster a live call needs. Kept narrow so a connection can
+ * hold the registry itself while still resolving the butler at call time.
+ */
+export interface ButlerRoster {
+  get(id: string): VoiceButler | undefined
+  resolveDefault(): VoiceButler | undefined
+}
+
 function slugify(name: string, taken: ReadonlySet<string>): string {
   const base = name.trim().replace(/\s+/g, '-').replace(/[/\\]/g, '-').slice(0, 32) || 'butler'
   if (!taken.has(base)) return base

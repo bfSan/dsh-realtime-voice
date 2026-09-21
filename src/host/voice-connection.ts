@@ -47,6 +47,7 @@ import type { VoiceInbox, VoiceInboxEntry } from './voice-inbox.ts'
 import { isSupervisorHello, parseSupervisorArguments, SUPERVISOR_TOOLS, SUPERVISOR_TOOL_NAMES, VOICE_SUPERVISOR_PROTOCOL } from '../supervisor-protocol.ts'
 import type { VoiceTaskDirectory } from './voice-task-directory.ts'
 import { VoiceSupervisor } from './voice-supervisor.ts'
+import { buildButlerBriefing, type ButlerRoster } from './butler-registry.ts'
 import { resolveSupervisorGuidance } from './supervisor-guidance.ts'
 import { isReadOnlyReportIntent } from './voice-intent.ts'
 
@@ -80,6 +81,20 @@ export class VoiceConnection {
   private supervisorMode = false
   private supervisor: VoiceSupervisor | undefined
   private butlerId: string | undefined
+
+  /**
+   * Identity block for the butler answering this call.
+   *
+   * Resolved late and never fatal: a roster that failed to open (or a butler
+   * the user has not created yet) must still let the call through.
+   */
+  private butlerBriefing(): string {
+    if (!this.supervisorMode || this.butlers === undefined) return ''
+    const butler = this.butlerId === undefined
+      ? this.butlers.resolveDefault()
+      : this.butlers.get(this.butlerId)
+    return butler === undefined ? '' : buildButlerBriefing(butler)
+  }
   private userTurnSequence = 0
   private reportReadOnly = false
   private readonly provisionalId = randomUUID()
@@ -161,6 +176,7 @@ export class VoiceConnection {
     private readonly inbox: VoiceInbox | undefined = undefined,
     private readonly guidanceRuntime: HandoffGuidanceRuntime = {},
     private readonly directory?: VoiceTaskDirectory,
+    private readonly butlers?: ButlerRoster,
   ) {
     this.progressGate = new ProgressAnnouncementGate({
       mode: config.progressReporting,
@@ -493,6 +509,7 @@ export class VoiceConnection {
     }
     const guidance = await resolveSupervisorGuidance({
       skill: this.config.supervisorSkill, instructions: this.config.supervisorInstructions,
+      butlerBriefing: this.butlerBriefing(),
       ...(status.cwd === undefined ? {} : { cwd: status.cwd }),
     }, this.guidanceRuntime)
     const instructions = this.supervisorMode ? `${guidance.body}\n当前选择：${this.supervisor?.selectedTask ?? '尚未选择任务'}。\n${this.config.stylePrompt}`
@@ -577,6 +594,7 @@ export class VoiceConnection {
     this.followDshEvents(taskId)
     const guidance = await resolveSupervisorGuidance({
       skill: this.config.supervisorSkill, instructions: this.config.supervisorInstructions,
+      butlerBriefing: this.butlerBriefing(),
       ...(status.cwd === undefined ? {} : { cwd: status.cwd }),
     }, this.guidanceRuntime)
     this.provider?.updateInstructions(`${guidance.body}\n当前明确选择的任务：${taskId}。${this.config.stylePrompt}`)

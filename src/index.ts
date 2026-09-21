@@ -229,6 +229,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
         inbox,
         guidanceRuntime,
         directory,
+        butlers,
       )
       connections.add(connection)
     })
