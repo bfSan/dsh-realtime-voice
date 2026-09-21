@@ -67,7 +67,8 @@
   原 desktop profile link 保持不变，通过 fast-forward 同步构建产物。
 - 同步后在实际 link 目标再次运行 `pnpm test`（270/270）和 `pnpm verify`，通过。
 - 旧版本标签保留。没有重写 profile、凭据或其它项目。
-- 桌面菜单、播放听感、供应端真实连接和多任务问答仍需解锁 Mac 后验收。
+- alpha.23 发布提交后重启过 DSH Desktop：`logs/host/dsh-2026-09-21.log` 自 13:17:26 起无 `[E]`/`[W]`，也没有 butler roster 或 inbox 的 storage 初始化失败；早先 02:18 那条 `invalid unit name 'realtime-voice-inbox'` 属于改名前的旧域名，不再出现。
+- 桌面菜单、播放听感、供应端真实连接和多任务问答仍需人工验收。
 
 ## 手工回归顺序
 
