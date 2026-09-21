@@ -34,7 +34,7 @@ import { InboxPersistence, voiceInboxStorageSpec, type InboxGlobal } from './hos
 import { ButlerRegistry } from './host/butler-registry.ts'
 import { butlerStorageSpec, parseStoredButlers } from './host/butler-persistence.ts'
 import { VoiceTaskDirectory, type VoiceProject, type VoiceAgent } from './host/voice-task-directory.ts'
-import { VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
+import { VOICE_BUTLER_ROUTE, VOICE_DIRECTORY_ROUTE } from './supervisor-protocol.ts'
 import { createVoicePreviewHandler } from './host/voice-preview-route.ts'
 
 export { Config }
@@ -304,6 +304,66 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     response.end(JSON.stringify(snapshot))
   }
 
+  /**
+   * The butler roster: GET lists it, POST creates one.
+   *
+   * Creation is synchronous against the in-memory registry because the only
+   * thing that must be durable is the storage-domain write already wired by
+   * the roster's change listener.
+   */
+  const butlerRoute = (request: IncomingMessage, response: ServerResponse): void => {
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      response.writeHead(405, { Allow: 'GET, POST' })
+      response.end()
+      return
+    }
+    if (!isLoopback(request.socket.remoteAddress) || !isAllowedOrigin(request)) {
+      response.writeHead(403)
+      response.end()
+      return
+    }
+    const json = (status: number, body: unknown): void => {
+      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+      response.end(JSON.stringify(body))
+    }
+    if (request.method === 'GET') {
+      json(200, { butlers: butlers.list().map(row => ({ id: row.id, name: row.name })) })
+      return
+    }
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => {
+      chunks.push(chunk)
+      // A roster entry is a name, nothing more: refusing oversized bodies here
+      // keeps an unbounded upload out of the registry write path.
+      if (chunks.reduce((total, item) => total + item.length, 0) > 4 * 1024) {
+        json(413, { error: '新总管称呼过长。' })
+        request.destroy()
+      }
+    })
+    request.on('end', () => {
+      let name = ''
+      try {
+        const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+        if (typeof parsed === 'object' && parsed !== null && typeof (parsed as { name?: unknown }).name === 'string') {
+          name = (parsed as { name: string }).name.trim().slice(0, 32)
+        }
+      } catch {
+        json(400, { error: '无法解析新总管请求。' })
+        return
+      }
+      if (!name) {
+        json(400, { error: '请先给这位总管一个称呼。' })
+        return
+      }
+      try {
+        const created = butlers.create(name)
+        json(201, { id: created.id, name: created.name })
+      } catch (error) {
+        json(400, { error: error instanceof Error ? error.message : '新建语音总管失败。' })
+      }
+    })
+  }
+
   ctx.effect(() => {
     const unregisterDirectory = ctx.webServer.register({
       kind: 'exact', path: VOICE_DIRECTORY_ROUTE,
@@ -320,6 +380,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
         })
       },
     })
+    const unregisterButlers = ctx.webServer.register({ kind: 'exact', path: VOICE_BUTLER_ROUTE, handler: butlerRoute })
     const unregisterStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_STATUS_ROUTE, handler: status })
     const unregisterDirectStatus = ctx.webServer.register({ kind: 'exact', path: VOICE_DIRECT_STATUS_ROUTE, handler: status })
     const unregisterInbox = ctx.webServer.register({ kind: 'exact', path: VOICE_INBOX_ROUTE, handler: callbacks })
@@ -336,6 +397,7 @@ export function apply(ctx: Context, config: VoiceConfig): void {
     const unregisterDirect = ctx.webServer.registerUpgrade({ path: VOICE_DIRECT_ROUTE, handler: upgradeDirect })
     return async () => {
       unregisterDirectory()
+      unregisterButlers()
       unregisterDirect()
       unregister()
       unregisterInbox()

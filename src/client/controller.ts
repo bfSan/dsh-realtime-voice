@@ -73,7 +73,11 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
 
   refreshButlers(): Promise<readonly { id: string; name: string }[]> {
     return fetch(VOICE_BUTLER_ROUTE, { cache: 'no-store' })
-      .then(async response => response.ok ? await response.json() as { id: string; name: string }[] : [])
+      .then(async response => {
+        if (!response.ok) return []
+        const payload = await response.json() as { butlers?: { id: string; name: string }[] }
+        return Array.isArray(payload.butlers) ? payload.butlers : []
+      })
       .catch(() => [])
   }
 

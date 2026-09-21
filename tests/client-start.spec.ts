@@ -252,3 +252,22 @@ function ready(voiceSessionId: string, serverSeq: number) {
     },
   }
 }
+
+describe('butler roster fetch', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads the roster out of the butlers envelope and tolerates failures', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, json: async () => ({ butlers: [{ id: 'ops', name: '运维' }] }),
+    })))
+    const controller = new VoiceCallController()
+    expect(await controller.refreshButlers()).toEqual([{ id: 'ops', name: '运维' }])
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })))
+    expect(await controller.refreshButlers()).toEqual([])
+
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+    expect(await controller.refreshButlers()).toEqual([])
+    await controller.dispose()
+  })
+})
