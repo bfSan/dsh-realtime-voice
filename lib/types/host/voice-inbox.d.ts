@@ -162,6 +162,18 @@ export declare class VoiceInbox {
     list(): VoiceInboxEntry[];
     /** Entries the voice surface still owes the user. */
     undelivered(): VoiceInboxEntry[];
+    /**
+     * Retire reports the user has now heard.
+     *
+     * Delivery is terminal: the task's whole purpose was to get one spoken
+     * result to the user, so once it has been spoken the row is done and leaves
+     * the list. Keeping it as an inert row made the list look permanently
+     * backlogged and left the user hunting for a way to clear things they had
+     * already listened to.
+     *
+     * Pending interactions never reach here - they are not reports, and the
+     * Agent is still blocked on them - which is why this cannot hide a question.
+     */
     markDelivered(ids: readonly string[]): VoiceInboxEntry[];
     /**
      * Mark the entry for one handoff as already reported. Used when the task

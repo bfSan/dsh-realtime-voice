@@ -4,10 +4,12 @@ import { ButlerRegistry } from '../src/host/butler-registry.ts'
 
 it('requires explicit selection and a fresh spoken user turn for execution', async () => {
   const submit = vi.fn(async () => ({ status: 'accepted' }))
-  const directory = { find: async () => ({ taskId: 's1' }) }
+  const directory = { find: async () => ({ taskId: 's1', title: '测试任务' }) }
   const supervisor = new VoiceSupervisor('c1', directory as never, { select: vi.fn(), submit, cancel: vi.fn() })
   expect(await supervisor.execute('submit_voice_task', '{"instruction":"执行"}')).toMatchObject({ status: 'needs-selection' })
-  await supervisor.execute('select_voice_task', '{"taskId":"s1"}')
+  expect(await supervisor.execute('select_voice_task', '{"taskId":"s1"}')).toMatchObject({ status: 'awaiting-confirmation' })
+  supervisor.userTurn('u0', '对，就这个')
+  await supervisor.execute('confirm_voice_task', '{"decision":"对，就这个"}')
   expect(await supervisor.execute('submit_voice_task', '{"instruction":"执行"}')).toMatchObject({ status: 'needs-clarification' })
   supervisor.userTurn('u1', '在测试目录创建 hello.txt')
   await supervisor.execute('submit_voice_task', '{"instruction":"创建 hello.txt"}')
@@ -18,12 +20,42 @@ it('requires explicit selection and a fresh spoken user turn for execution', asy
 
 it('never translates an ambiguous oral report request into file work', async () => {
   const submit = vi.fn()
-  const supervisor = new VoiceSupervisor('c', { find: async () => ({ taskId: 's' }) } as never,
+  const supervisor = new VoiceSupervisor('c', { find: async () => ({ taskId: 's', title: '任务' }) } as never,
     { select: vi.fn(), submit, cancel: vi.fn() })
   await supervisor.execute('select_voice_task', '{"taskId":"s"}')
+  supervisor.userTurn('u0', '对')
+  await supervisor.execute('confirm_voice_task', '{"decision":"对"}')
   supervisor.userTurn('u', '汇报啊')
   expect(await supervisor.execute('submit_voice_task', '{"instruction":"把两份汇报合并"}')).toMatchObject({ status: 'needs-clarification' })
   expect(submit).not.toHaveBeenCalled()
+})
+
+it('will not bind a task until the user confirms it out loud', async () => {
+  const select = vi.fn()
+  const directory = { find: async () => ({ taskId: 's9', title: '周报任务' }) }
+  const supervisor = new VoiceSupervisor('c', directory as never, { select, submit: vi.fn(), cancel: vi.fn() })
+  expect(await supervisor.execute('select_voice_task', '{"taskId":"s9"}')).toMatchObject({
+    status: 'awaiting-confirmation', title: '周报任务',
+  })
+  expect(select).not.toHaveBeenCalled()
+
+  // An unrelated or corrective answer must fail closed.
+  supervisor.userTurn('u1', '不对，是另一个')
+  expect(await supervisor.execute('confirm_voice_task', '{"decision":"不对，是另一个"}')).toMatchObject({ status: 'not-confirmed' })
+  supervisor.userTurn('u2', '先别动，我再想想')
+  expect(await supervisor.execute('confirm_voice_task', '{"decision":"先别动，我再想想"}')).toMatchObject({ status: 'not-confirmed' })
+  expect(select).not.toHaveBeenCalled()
+
+  supervisor.userTurn('u3', '对，就是这个')
+  expect(await supervisor.execute('confirm_voice_task', '{"decision":"对，就是这个"}')).toMatchObject({ status: 'selected', taskId: 's9' })
+  expect(select).toHaveBeenCalledOnce()
+})
+
+it('refuses a confirmation that arrives without a proposal', async () => {
+  const supervisor = new VoiceSupervisor('c', { find: async () => ({ taskId: 's' }) } as never,
+    { select: vi.fn(), submit: vi.fn(), cancel: vi.fn() })
+  supervisor.userTurn('u', '对')
+  expect(await supervisor.execute('confirm_voice_task', '{"decision":"对"}')).toMatchObject({ status: 'needs-selection' })
 })
 
 it('routes butler roster, scope and todo calls to the roster instead of DSH work', async () => {

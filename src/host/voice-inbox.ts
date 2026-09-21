@@ -292,13 +292,27 @@ export class VoiceInbox {
     return this.list().filter(entry => !entry.delivered)
   }
 
+  /**
+   * Retire reports the user has now heard.
+   *
+   * Delivery is terminal: the task's whole purpose was to get one spoken
+   * result to the user, so once it has been spoken the row is done and leaves
+   * the list. Keeping it as an inert row made the list look permanently
+   * backlogged and left the user hunting for a way to clear things they had
+   * already listened to.
+   *
+   * Pending interactions never reach here - they are not reports, and the
+   * Agent is still blocked on them - which is why this cannot hide a question.
+   */
   markDelivered(ids: readonly string[]): VoiceInboxEntry[] {
     const wanted = new Set(ids)
     const delivered: VoiceInboxEntry[] = []
-    for (const entry of this.entries) {
-      if (!wanted.has(entry.id) || entry.delivered) continue
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index]
+      if (entry === undefined || !wanted.has(entry.id)) continue
       entry.delivered = true
       delivered.push({ ...entry })
+      this.entries.splice(index, 1)
     }
     if (delivered.length > 0) this.onChange?.()
     return delivered
@@ -310,7 +324,8 @@ export class VoiceInbox {
    * result, so ringing them back about it would repeat the same news.
    */
   markHandoffDelivered(handoffId: string): VoiceInboxEntry | undefined {
-    const entry = this.entries.find(candidate => candidate.handoffId === handoffId)
+    const index = this.entries.findIndex(candidate => candidate.handoffId === handoffId)
+    const entry = index === -1 ? undefined : this.entries[index]
     if (entry === undefined) {
       // The live call and the inbox read two independent streams of the same
       // frame, so the spoken marker can arrive first; remember it so the entry
@@ -318,10 +333,11 @@ export class VoiceInbox {
       if (this.watched.has(handoffId)) this.spokenHandoffs.add(handoffId)
       return undefined
     }
-    if (entry.delivered) return undefined
-    entry.delivered = true
+    // Already spoken by the live call, so there is nothing to ring about.
+    this.entries.splice(index, 1)
+    const spoken = { ...entry, delivered: true }
     this.onChange?.()
-    return { ...entry }
+    return spoken
   }
 
   dismiss(ids: readonly string[]): number {
@@ -472,6 +488,10 @@ export class VoiceInbox {
       durationMs: Math.max(0, now - watch.createdAt),
       delivered: alreadySpoken,
     }
+    // The live call already spoke this result, so there is nothing left to
+    // ring back about. Returning it keeps the caller's contract (it learns
+    // what the turn produced) while leaving the list free of dead rows.
+    if (alreadySpoken) return { ...entry }
     this.entries.push(entry)
     this.trim()
     const titleLookup = this.titleLookup

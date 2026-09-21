@@ -53,6 +53,38 @@ describe('assistant realtime transcript', () => {
     await controller.dispose()
   })
 
+  it('does not cancel a report on an onset that arrives right after playback starts', async () => {
+    // Speaker output leaks into the microphone, so the first moments of the
+    // AI's own report look like someone starting to talk. Cancelling there
+    // stopped reports a fraction of a second in, at random.
+    vi.stubGlobal('WebSocket', { OPEN: 1 })
+    const controller = new VoiceCallController(() => {})
+    const interruptPlayback = vi.fn()
+    const send = vi.fn()
+    const internal = controller as unknown as {
+      snapshot: ReturnType<VoiceCallController['getSnapshot']>
+      audio: { interruptPlayback(): void; close(): Promise<void> }
+      socket: { readyState: number; send(value: string): void }
+      playbackStartedAt: number
+      handleLocalSpeechStart(): void
+    }
+    internal.snapshot = { ...controller.getSnapshot(), phase: 'speaking', turnDetection: 'server_vad' }
+    internal.audio = { interruptPlayback, close: async () => {} }
+    internal.socket = { readyState: 1, send }
+    internal.playbackStartedAt = Date.now()
+
+    internal.handleLocalSpeechStart()
+    expect(interruptPlayback).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+
+    // Once the echo settle window has passed, a real interruption still works.
+    internal.playbackStartedAt = Date.now() - 5_000
+    internal.handleLocalSpeechStart()
+    expect(interruptPlayback).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().phase).toBe('listening')
+    await controller.dispose()
+  })
+
   it('surfaces and answers an authoritative DSH approval without turning it into a new prompt', async () => {
     vi.stubGlobal('WebSocket', { OPEN: 1 })
     const controller = new VoiceCallController()

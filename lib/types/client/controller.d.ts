@@ -73,6 +73,8 @@ export declare class VoiceCallController implements HostObservable<VoiceSnapshot
     private lastOutputStreamId;
     private inboxRevision;
     private answeringInbox;
+    /** When the current spoken response started reaching the speaker. */
+    private playbackStartedAt;
     getSnapshot: () => VoiceSnapshot;
     subscribe: (listener: () => void) => (() => void);
     startPresence(): void;
@@ -109,7 +111,18 @@ export declare class VoiceCallController implements HostObservable<VoiceSnapshot
     private sendControl;
     private scheduleReconnect;
     private tick;
-    /** Stop audible output before the server-side VAD event completes its round trip. */
+    /**
+     * Stop audible output before the server-side VAD event completes its round trip.
+     *
+     * The microphone hears the speaker, so the first frames of the AI's own
+     * report can look like a person starting to talk. Cancelling on that made
+     * reports stop a moment after they began, at random, depending on room echo
+     * and output volume. Inside the settle window the local detector no longer
+     * cancels by itself: the provider's own VAD, which sees the same audio
+     * through the network loop, decides whether a real turn started. Outside the
+     * window the fast local path is unchanged, so a deliberate interruption
+     * still stops playback immediately.
+     */
     private handleLocalSpeechStart;
     private fail;
     private cleanup;

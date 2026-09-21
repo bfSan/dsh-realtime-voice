@@ -52,6 +52,15 @@ export interface VoiceSnapshot {
   error?: string | undefined
 }
 
+/**
+ * How long after playback starts a local onset is treated as echo, not a person.
+ *
+ * 600ms covers the echo canceller converging plus the round trip of the
+ * provider's own VAD decision, so a real interruption still lands promptly
+ * while the report's own opening audio cannot cancel it.
+ */
+const ECHO_SETTLE_MS = 600
+
 const INITIAL_SNAPSHOT: VoiceSnapshot = {
   phase: 'idle',
   muted: false,
@@ -169,6 +178,8 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   private lastOutputStreamId = 0
   private inboxRevision = 0
   private answeringInbox = false
+  /** When the current spoken response started reaching the speaker. */
+  private playbackStartedAt = 0
 
   getSnapshot = (): VoiceSnapshot => this.snapshot
 
@@ -552,6 +563,11 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
         void this.fail(busyMessage(message.occupancy), false, message.occupancy)
         return
       case 'voice.state':
+        // A new spoken response restarts echo settling: the microphone is
+        // about to hear the speaker again from a new, unknown output level.
+        if (message.phase === 'speaking' && this.snapshot.phase !== 'speaking') {
+          this.playbackStartedAt = Date.now()
+        }
         this.update({
           ...this.snapshot,
           phase: message.phase,
@@ -683,11 +699,23 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
     this.update({ ...this.snapshot, elapsedSeconds: Math.floor((Date.now() - this.startedAt) / 1000) })
   }
 
-  /** Stop audible output before the server-side VAD event completes its round trip. */
+  /**
+   * Stop audible output before the server-side VAD event completes its round trip.
+   *
+   * The microphone hears the speaker, so the first frames of the AI's own
+   * report can look like a person starting to talk. Cancelling on that made
+   * reports stop a moment after they began, at random, depending on room echo
+   * and output volume. Inside the settle window the local detector no longer
+   * cancels by itself: the provider's own VAD, which sees the same audio
+   * through the network loop, decides whether a real turn started. Outside the
+   * window the fast local path is unchanged, so a deliberate interruption
+   * still stops playback immediately.
+   */
   private handleLocalSpeechStart(): void {
     if (this.snapshot.phase !== 'speaking'
       || this.snapshot.muted
       || this.snapshot.turnDetection !== 'server_vad') return
+    if (Date.now() - this.playbackStartedAt < ECHO_SETTLE_MS) return
     this.audio?.interruptPlayback()
     this.sendControl({ type: 'voice.cancel-response', source: 'local-vad' })
     this.update({ ...this.snapshot, phase: 'listening' })

@@ -88,6 +88,17 @@ export declare class VoiceConnection {
     private readonly streamAttempts;
     private readonly attemptFinalSequences;
     private readonly reportHandoffs;
+    /**
+     * Bookkeeping for streams a cancel just tore down.
+     *
+     * A cancel and a drain can cross on the wire: the browser finishes playing a
+     * report and posts its acknowledgement while a barge-in is already clearing
+     * the bookkeeping. Dropping that acknowledgement made a fully heard report
+     * look interrupted forever, which both stranded it in the call-back list and
+     * replayed it on the next ring. The entries are held briefly and pruned, so
+     * the memory cost stays bounded by the number of recent interruptions.
+     */
+    private readonly settlingStreams;
     private trace;
     private confirmReport;
     private readonly progressGate;
@@ -151,6 +162,15 @@ export declare class VoiceConnection {
      */
     private schedulePlaybackFallback;
     private releasePlaybackGate;
+    /**
+     * Remember a stream a cancel just cleared, in case its drain is in flight.
+     *
+     * The window is short because a browser posts its drain as soon as the queue
+     * empties: anything later than this belongs to a different stream, and the
+     * monotonic sequence check rejects it anyway.
+     */
+    private holdSettlingStream;
+    private clearSettling;
     /** Stop one response exactly once, even when local and provider VAD race. */
     private interruptActiveResponse;
     private sendTranscript;

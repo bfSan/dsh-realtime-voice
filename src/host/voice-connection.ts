@@ -50,10 +50,19 @@ import { VoiceSupervisor } from './voice-supervisor.ts'
 import { buildButlerBriefing, type ButlerRoster } from './butler-registry.ts'
 import { resolveSupervisorGuidance } from './supervisor-guidance.ts'
 import { isReadOnlyReportIntent } from './voice-intent.ts'
+import { hasSpokenContent, toSpokenText } from './spoken-text.ts'
 
 
 const MAX_BROWSER_AUDIO_BUFFERED_BYTES = 4 * 1024 * 1024
 const BROWSER_AUDIO_SEND_TIMEOUT_MS = 15_000
+/**
+ * How long a cancelled stream's delivery bookkeeping survives.
+ *
+ * A drag of the browser's drain acknowledgement can arrive after the cancel
+ * that cleared the stream, and that acknowledgement is the only proof the
+ * report was heard.
+ */
+const SETTLING_STREAM_MS = 15_000
 /** Lease target when no butler is named; kept distinct from any DSH session. */
 const SUPERVISOR_LEASE_TARGET = 'voice-supervisor'
 export function supervisorLeaseTarget(butlerId: string | undefined): string {
@@ -154,6 +163,21 @@ export class VoiceConnection {
   private readonly streamAttempts = new Map<number, Set<string>>()
   private readonly attemptFinalSequences = new Map<string, number>()
   private readonly reportHandoffs = new Map<string, string[]>()
+  /**
+   * Bookkeeping for streams a cancel just tore down.
+   *
+   * A cancel and a drain can cross on the wire: the browser finishes playing a
+   * report and posts its acknowledgement while a barge-in is already clearing
+   * the bookkeeping. Dropping that acknowledgement made a fully heard report
+   * look interrupted forever, which both stranded it in the call-back list and
+   * replayed it on the next ring. The entries are held briefly and pruned, so
+   * the memory cost stays bounded by the number of recent interruptions.
+   */
+  private readonly settlingStreams = new Map<number, {
+    attempts: Set<string>
+    finalSequences: Map<string, number>
+    timer: ReturnType<typeof setTimeout>
+  }>()
 
   private trace(kind: VoiceDiagnosticEvent['kind'], ids: Partial<VoiceDiagnosticEvent> = {}): void {
     if (process.env.DSH_VOICE_DIAGNOSTICS !== '1') return
@@ -232,6 +256,7 @@ export class VoiceConnection {
     this.outputPacketizer.clear()
     clearTimeout(this.helloTimer)
     if (this.playbackDrainFallbackTimer !== undefined) clearTimeout(this.playbackDrainFallbackTimer)
+    for (const streamId of [...this.settlingStreams.keys()]) this.clearSettling(streamId)
     this.hostEventsAbort?.abort()
     this.progressCoalescer.dispose()
     this.coordinator = undefined
@@ -330,9 +355,12 @@ export class VoiceConnection {
         return
       case 'voice.playback-drained':
         {
-          const attempts = this.streamAttempts.get(parsed.streamId)
+          // A cancel may have just torn this stream down while the drain was
+          // already in flight; the settling copy is what lets that proof land.
+          const settling = this.settlingStreams.get(parsed.streamId)
+          const attempts = this.streamAttempts.get(parsed.streamId) ?? settling?.attempts
           for (const attempt of attempts ?? []) {
-            const finalSequence = this.attemptFinalSequences.get(attempt)
+            const finalSequence = this.attemptFinalSequences.get(attempt) ?? settling?.finalSequences.get(attempt)
             if (this.hello?.client.playbackDrainAck !== true || finalSequence === undefined
               || parsed.lastSequence === undefined || parsed.lastSequence < finalSequence) continue
             this.trace('drained', { requestId: attempt })
@@ -340,8 +368,12 @@ export class VoiceConnection {
             this.confirmReport(attempt)
             attempts?.delete(attempt)
             this.attemptFinalSequences.delete(attempt)
+            settling?.finalSequences.delete(attempt)
           }
-          if (attempts?.size === 0) this.streamAttempts.delete(parsed.streamId)
+          if (attempts?.size === 0) {
+            this.streamAttempts.delete(parsed.streamId)
+            this.clearSettling(parsed.streamId)
+          }
         }
         if (this.hello?.client.playbackDrainAck === true && parsed.streamId === this.gatedOutputStreamId) {
           this.releasePlaybackGate()
@@ -404,7 +436,14 @@ export class VoiceConnection {
     const summary = ordered.map((entry, index) => {
       const tag = entry.status === 'completed' ? 'COMPLETE' : entry.status === 'cancelled' ? 'CANCELLED' : 'FAILED'
       const title = entry.sessionTitle === undefined ? '' : `，来自任务「${entry.sessionTitle}」`
-      return `${index + 1}. [${tag}]${title}：${entry.summary.slice(0, perEntryBudget)}`
+      // The stored summary is raw Agent output: markdown, paths and hashes.
+      // Normalising here is what stops the model from reading them aloud.
+      // A summary that was nothing but a code fence normalises to empty, so it
+      // falls back to the task's verdict rather than injecting a blank report.
+      const spoken = hasSpokenContent(entry.summary)
+        ? toSpokenText(entry.summary, perEntryBudget)
+        : '这个任务结束了，详细内容需要你在 DSH 里查看。'
+      return `${index + 1}. [${tag}]${title}：${spoken}`
     }).join('\n')
     const single = ordered.length === 1
     const attemptId = `inbox_${randomUUID()}`
@@ -415,8 +454,8 @@ export class VoiceConnection {
       id: attemptId,
       text: `[COMPLETE] 用户挂断后完成的任务结果，共 ${ordered.length} 条：\n${summary}\n${
         single
-          ? '这是用户刚从回拨列表里选中的任务。请用一两句话汇报结论，不要重复提交这个任务。'
-          : '这些是用户刚从回拨列表里按顺序选中的任务。请按顺序逐条用一两句话汇报结论，不要重复提交这些任务。'
+          ? '这是用户刚从回拨列表里选中的任务。请用一两句话口语化地汇报结论，像跟人说话一样，不要念标点、括号、路径或编号，不要重复提交这个任务。'
+          : '这些是用户刚从回拨列表里按顺序选中的任务。请按顺序逐条用一两句话口语化地汇报结论，像跟人说话一样，不要念标点、括号、路径或编号，不要重复提交这些任务。'
       }`,
       body: summary,
       kind: 'complete',
@@ -1009,10 +1048,11 @@ export class VoiceConnection {
             // receives every summary above.
             if (this.progressGate.decide()) {
               const group = `${frame.sessionId}:${turn}`
+              const spoken = toSpokenText(text, 600)
               this.progressCoalescer.offer({
                 id: `backend_progress_${event.seq}`,
-                text: `[STATUS] ${text}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
-                body: text,
+                text: `[STATUS] ${spoken}\n这是执行中的阶段更新。只在它对当前对话有帮助时简短播报，不要把它误当成最终完成。`,
+                body: spoken,
                 kind: 'status',
                 group,
               })
@@ -1060,11 +1100,12 @@ export class VoiceConnection {
           ...(text === undefined ? {} : { summary: text.slice(0, 1_200) }),
         })
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
+        const spokenResult = toSpokenText(resultText)
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
         this.progressCoalescer.settle({
           id: attemptId,
-          text: `${completionTag} ${resultText}\n这是绑定 DSH 任务的权威终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
-          body: resultText,
+          text: `${completionTag} ${spokenResult}\n这是绑定 DSH 任务的权威终态。请用一两句话口语化地汇报结论，不要念标点和括号，不要再次提交已经完成的任务。`,
+          body: spokenResult,
           kind: 'complete',
           group: key,
         })
@@ -1123,6 +1164,7 @@ export class VoiceConnection {
         if (ended.length === 0) continue
         const text = assistantByTurn.get(data.turn)
         const resultText = text ?? `DSH Agent 已结束本轮工作，结束状态为 ${reason}。`
+        const spokenResult = toSpokenText(resultText)
         const completionTag = reason === 'completed' ? '[COMPLETE]' : reason === 'cancelled' ? '[CANCELLED]' : '[FAILED]'
         const group = `${sessionId}:${data.turn}`
         const attemptId = `backend_complete_${sessionId}_${data.turn}`
@@ -1145,8 +1187,8 @@ export class VoiceConnection {
         // already spoken repeated it verbatim.
         this.progressCoalescer.settle({
           id: attemptId,
-          text: `${completionTag} ${resultText}\n这是重连后从 DSH 权威历史恢复的终态。请简短、准确地向用户汇报；不要再次提交已经完成的任务。`,
-          body: resultText,
+          text: `${completionTag} ${spokenResult}\n这是重连后从 DSH 权威历史恢复的终态。请用一两句话口语化地汇报结论，不要念标点和括号，不要再次提交已经完成的任务。`,
+          body: spokenResult,
           kind: 'complete',
           group,
         })
@@ -1409,6 +1451,28 @@ export class VoiceConnection {
     }
   }
 
+  /**
+   * Remember a stream a cancel just cleared, in case its drain is in flight.
+   *
+   * The window is short because a browser posts its drain as soon as the queue
+   * empties: anything later than this belongs to a different stream, and the
+   * monotonic sequence check rejects it anyway.
+   */
+  private holdSettlingStream(streamId: number, attempts: Set<string>, finalSequences: Map<string, number>): void {
+    this.clearSettling(streamId)
+    const timer = setTimeout(() => this.settlingStreams.delete(streamId), SETTLING_STREAM_MS)
+    // Never keep the host process alive for a bookkeeping entry.
+    timer.unref?.()
+    this.settlingStreams.set(streamId, { attempts: new Set(attempts), finalSequences, timer })
+  }
+
+  private clearSettling(streamId: number): void {
+    const existing = this.settlingStreams.get(streamId)
+    if (existing === undefined) return
+    clearTimeout(existing.timer)
+    this.settlingStreams.delete(streamId)
+  }
+
   /** Stop one response exactly once, even when local and provider VAD race. */
   private interruptActiveResponse(reason: 'barge-in' | 'cancelled', cancelProvider: boolean, source?: 'local-vad' | 'user'): void {
     this.trace('cancel', { source: source ?? (cancelProvider ? 'user' : 'server-vad') })
@@ -1418,8 +1482,25 @@ export class VoiceConnection {
     for (const attempt of interruptedAttempts) {
       for (const id of this.reportAttempts.get(attempt) ?? []) this.reportDelivery.interrupt(`${attempt}:${id}`)
     }
+    // Preserve the mapping for a drain that is already in flight, so proof of
+    // delivery is not lost to a cancel that raced it.
+    for (const [streamId, attempts] of this.streamAttempts) {
+      const finalSequences = new Map<string, number>()
+      for (const attempt of attempts) {
+        const finalSequence = this.attemptFinalSequences.get(attempt)
+        if (finalSequence !== undefined) finalSequences.set(attempt, finalSequence)
+      }
+      if (finalSequences.size > 0) this.holdSettlingStream(streamId, attempts, finalSequences)
+    }
     this.streamAttempts.clear()
-    this.attemptFinalSequences.clear()
+    // The final-sequence record is deliberately NOT cleared here. A drain
+    // acknowledgement can already be in flight when a barge-in lands, and that
+    // acknowledgement is the only proof the report was actually heard. It is
+    // still safe to honour later: stream ids are monotonic and never reused,
+    // the drain must carry a sequence at least as high as the recorded final
+    // one, and ReportDelivery refuses to complete an attempt that never
+    // drained. Dropping the record instead stranded a fully heard report in
+    // the call-back list forever.
     const responseId = this.activeResponseId
     if (responseId !== undefined) {
       if (this.suppressedResponses.has(responseId)) return

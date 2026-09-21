@@ -6,9 +6,19 @@ export interface LocalVadOptions {
 }
 
 const DEFAULT_OPTIONS: LocalVadOptions = {
-  rmsThreshold: 0.025,
-  peakThreshold: 0.1,
-  attackFrames: 2,
+  rmsThreshold: 0.04,
+  peakThreshold: 0.14,
+  /**
+   * Four frames is 160ms of sustained voice.
+   *
+   * Two was not enough: loudspeaker output leaks into the microphone, and
+   * browser echo cancellation needs a few frames to converge after playback
+   * starts. That leak tripped the detector at the onset of the AI's own
+   * report, which cancelled the report a moment after it began. A person
+   * interrupting speaks for far longer than 160ms, so the higher bar costs
+   * nothing perceptible while ignoring the leak.
+   */
+  attackFrames: 4,
   releaseFrames: 5,
 }
 

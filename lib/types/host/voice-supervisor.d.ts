@@ -15,6 +15,19 @@ export declare class VoiceSupervisor {
     /** Which butler answers this call; undefined means the roster default. */
     readonly butlerId: string | undefined;
     private turn;
+    /**
+     * The task object waiting for the user to confirm it out loud.
+     *
+     * Selection is deliberately two-step. The model used to bind whatever
+     * session it inferred from a list, which is how a spoken request landed on
+     * the wrong conversation: the list carries titles, not intent, and guessing
+     * between two similarly named tasks is not recoverable once work starts.
+     * Proposing first and binding only on an explicit "对/可以/就这个" makes the
+     * user the one who picks, and leaves the model nothing to infer.
+     */
+    private pendingSelection;
+    /** The creation the user is being asked to approve. */
+    private pendingCreation;
     private selecting;
     private readonly receipts;
     constructor(callId: string, directory: VoiceTaskDirectory, actions: SupervisorActions, butlers?: ButlerRoster | undefined, butlerId?: string);

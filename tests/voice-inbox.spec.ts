@@ -114,16 +114,17 @@ describe('voice call-back inbox', () => {
     expect(inbox.list()).toHaveLength(1)
   })
 
-  it('tracks delivered state and removes entries on request', () => {
+  it('retires a listened report instead of leaving an inert row', () => {
     const inbox = new VoiceInbox()
     inbox.watch({ handoffId: 'h-1', sessionId: 's-1', request: 'A' })
     const entry = inbox.observe(turnEnd('s-1', 1))!
     expect(inbox.undelivered()).toHaveLength(1)
     expect(inbox.markDelivered([entry.id])).toHaveLength(1)
+    // The whole point of the entry was one spoken result, so once it is heard
+    // it is done: a delivered row must not linger in the list.
+    expect(inbox.list()).toEqual([])
     expect(inbox.undelivered()).toHaveLength(0)
     expect(inbox.markDelivered([entry.id])).toHaveLength(0)
-    expect(inbox.dismiss([entry.id])).toBe(1)
-    expect(inbox.list()).toEqual([])
   })
 
   it('can mark one handoff delivered so a call that already spoke it never rings back', () => {

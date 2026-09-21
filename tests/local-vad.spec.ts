@@ -2,16 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { LocalVoiceActivityDetector } from '../src/client/local-vad.ts'
 
 describe('local voice activity onset', () => {
-  it('fires after two voiced frames and rearms only after sustained silence', () => {
+  it('requires sustained voice before it fires, so speaker bleed cannot trip it', () => {
     const detector = new LocalVoiceActivityDetector()
     const voice = pcm(5_000)
     const silence = pcm(0)
 
-    expect(detector.push(voice)).toBe(false)
+    // Three frames of voice is 120ms - less than a person says when they
+    // interrupt, and about as long as the AI's own opening audio leaks back.
+    for (let index = 0; index < 3; index += 1) expect(detector.push(voice)).toBe(false)
     expect(detector.push(voice)).toBe(true)
     expect(detector.push(voice)).toBe(false)
     for (let index = 0; index < 5; index += 1) expect(detector.push(silence)).toBe(false)
-    expect(detector.push(voice)).toBe(false)
+    for (let index = 0; index < 3; index += 1) expect(detector.push(voice)).toBe(false)
     expect(detector.push(voice)).toBe(true)
   })
 

@@ -72,6 +72,37 @@ function binaryFrames(socket: FakeBrowserSocket) {
 }
 
 describe('Host audio flow', () => {
+  it('settles a report whose drain crossed the cancel that cleared its stream', async () => {
+    // The exact production failure: the browser finishes playing a report and
+    // posts its drain while a barge-in (here triggered by the report's own
+    // audio leaking into the microphone) is clearing the stream bookkeeping.
+    const { connection, socket, internal } = createConnection()
+    const reports = connection as unknown as {
+      reportDelivery: ReportDelivery
+      reportAttempts: Map<string, string[]>
+      interruptActiveResponse(reason: 'barge-in', cancelProvider: boolean): void
+      receive(raw: Buffer, binary: boolean): Promise<void>
+    }
+    reports.reportAttempts.set('a1', ['r1'])
+    reports.reportDelivery.begin('r1', 'a1:r1')
+    internal.onProviderEvent({ type: 'response.created', response: { id: 'response-a' }, announcementId: 'a1' })
+    internal.onProviderEvent({ type: 'response.audio.delta', response_id: 'response-a', delta: Buffer.alloc(1_920, 7).toString('base64') })
+    internal.onProviderEvent({ type: 'response.done', response: { id: 'response-a', status: 'completed' } })
+    await vi.waitFor(() => expect(binaryFrames(socket)).toHaveLength(1))
+    const frame = binaryFrames(socket)[0]!
+
+    // The cancel lands first, after every frame has already been delivered.
+    reports.interruptActiveResponse('barge-in', false)
+    expect(reports.reportDelivery.state('r1')).toBe('interrupted')
+
+    // The drain was already on the wire; it must still confirm delivery.
+    await reports.receive(Buffer.from(JSON.stringify({
+      type: 'voice.playback-drained', streamId: frame.streamId, lastSequence: frame.sequence,
+    })), false)
+    expect(reports.reportDelivery.state('r1')).toBe('completed')
+    connection.dispose()
+  })
+
   it('does not acknowledge the next report from a stale playback sequence', async () => {
     const { connection, socket, internal } = createConnection()
     const reports = connection as unknown as {
