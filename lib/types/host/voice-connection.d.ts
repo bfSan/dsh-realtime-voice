@@ -7,6 +7,8 @@ import { VoiceRuntime, type VoiceContinuityState } from './voice-runtime.ts';
 import { type HandoffGuidanceRuntime } from './handoff-guidance.ts';
 import type { VoiceInbox } from './voice-inbox.ts';
 import type { VoiceTaskDirectory } from './voice-task-directory.ts';
+import { type ButlerRoster } from './butler-registry.ts';
+export declare function supervisorLeaseTarget(butlerId: string | undefined): string;
 /** One client-neutral voice call, pinned to one DSH session for its full lifetime. */
 export declare class VoiceConnection {
     private readonly ctx;
@@ -18,8 +20,17 @@ export declare class VoiceConnection {
     private readonly inbox;
     private readonly guidanceRuntime;
     private readonly directory?;
+    private readonly butlers?;
     private supervisorMode;
     private supervisor;
+    private butlerId;
+    /**
+     * Identity block for the butler answering this call.
+     *
+     * Resolved late and never fatal: a roster that failed to open (or a butler
+     * the user has not created yet) must still let the call through.
+     */
+    private butlerBriefing;
     private userTurnSequence;
     private reportReadOnly;
     private readonly provisionalId;
@@ -73,7 +84,7 @@ export declare class VoiceConnection {
     private confirmReport;
     private readonly progressGate;
     private readonly progressCoalescer;
-    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime, directory?: VoiceTaskDirectory | undefined);
+    constructor(ctx: Context, socket: WebSocket, request: IncomingMessage, config: VoiceConfig, onClosed: () => void, runtime?: VoiceRuntime, inbox?: VoiceInbox | undefined, guidanceRuntime?: HandoffGuidanceRuntime, directory?: VoiceTaskDirectory | undefined, butlers?: ButlerRoster | undefined);
     get id(): string;
     dispose(reason?: string): void;
     private receive;

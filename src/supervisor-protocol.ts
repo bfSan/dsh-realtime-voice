@@ -3,6 +3,7 @@ import type { DirectFunctionTool } from './direct-protocol.ts'
 
 export const VOICE_SUPERVISOR_PROTOCOL = 'dsh.voice.supervisor.v1' as const
 export const VOICE_DIRECTORY_ROUTE = '/api/realtime-voice/directory'
+export const VOICE_BUTLER_ROUTE = '/api/realtime-voice/butlers'
 export interface SupervisorHello extends Omit<VoiceHello, 'protocol' | 'target'> {
   protocol: typeof VOICE_SUPERVISOR_PROTOCOL
   target?: { sessionId: string }

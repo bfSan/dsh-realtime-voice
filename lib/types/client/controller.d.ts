@@ -5,6 +5,8 @@ export interface VoiceSnapshot {
     supervisor?: boolean;
     phase: ClientVoicePhase;
     sessionId?: string;
+    /** Which butler answered this call, when the call is an independent one. */
+    butlerId?: string;
     voiceSessionId?: string;
     muted: boolean;
     userTranscript: string;
@@ -28,11 +30,25 @@ export interface VoiceSnapshot {
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
 export declare class VoiceCallController implements HostObservable<VoiceSnapshot> {
     private supervisorMode;
+    private butlerId;
     private readonly playbackFinalSequences;
     private taskAction;
+    refreshButlers(): Promise<readonly {
+        id: string;
+        name: string;
+    }[]>;
+    /** Roster snapshot for the launcher; refreshed whenever the panel needs it. */
+    private roster;
+    butlerRoster(): readonly {
+        id: string;
+        name: string;
+    }[];
     private sendTaskAction;
     private settleTaskAction;
     startSupervisor(): Promise<void>;
+    /** Call a named butler instead of the roster default. */
+    startButler(butlerId: string): Promise<void>;
+    createButler(name: string): Promise<string>;
     selectTask(taskId: string): Promise<void>;
     createTask(workspace: string, presetId: string): Promise<void>;
     private snapshot;

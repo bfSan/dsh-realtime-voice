@@ -72,8 +72,11 @@ export function apply(ctx: Context): void {
     inject: (): VoiceLauncherInjected => ({
       hooks: { voice },
       startSupervisor: () => voice.startSupervisor(),
+      startButler: butlerId => voice.startButler(butlerId),
       selectTask: taskId => voice.selectTask(taskId),
       createTask: (workspace, preset) => voice.createTask(workspace, preset),
+      createButler: name => voice.createButler(name),
+      butlers: voice.butlerRoster(),
     }),
   }, VoiceLauncher))
 

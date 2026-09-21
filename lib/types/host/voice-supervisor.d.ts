@@ -10,10 +10,12 @@ export declare class VoiceSupervisor {
     private readonly directory;
     private readonly actions;
     selectedTask: string | undefined;
+    /** Which butler answers this call; undefined means the roster default. */
+    readonly butlerId: string | undefined;
     private turn;
     private selecting;
     private readonly receipts;
-    constructor(callId: string, directory: VoiceTaskDirectory, actions: SupervisorActions);
+    constructor(callId: string, directory: VoiceTaskDirectory, actions: SupervisorActions, butlerId?: string);
     userTurn(id: string, text: string): void;
     reportMode(): void;
     select(taskId: string): Promise<void>;

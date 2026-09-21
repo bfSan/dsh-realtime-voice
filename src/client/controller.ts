@@ -20,6 +20,7 @@ import {
   type VoiceOccupancyStatus,
   type VoiceServerControl,
 } from '../protocol.ts'
+import { VOICE_BUTLER_ROUTE } from '../supervisor-protocol.ts'
 import { BrowserAudioEngine } from './audio-engine.ts'
 
 export type ClientVoicePhase = 'idle' | 'requesting-permission' | VoicePhase | 'error'
@@ -28,6 +29,8 @@ export interface VoiceSnapshot {
   supervisor?: boolean
   phase: ClientVoicePhase
   sessionId?: string
+  /** Which butler answered this call, when the call is an independent one. */
+  butlerId?: string
   voiceSessionId?: string
   muted: boolean
   userTranscript: string
@@ -64,8 +67,23 @@ const INITIAL_SNAPSHOT: VoiceSnapshot = {
 /** Root-lifetime call controller shared by the session button and frame overlay through inject hooks. */
 export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   private supervisorMode = false
+  private butlerId: string | undefined
   private readonly playbackFinalSequences = new Map<number, number>()
   private taskAction: { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> } | undefined
+
+  refreshButlers(): Promise<readonly { id: string; name: string }[]> {
+    return fetch(VOICE_BUTLER_ROUTE, { cache: 'no-store' })
+      .then(async response => response.ok ? await response.json() as { id: string; name: string }[] : [])
+      .catch(() => [])
+  }
+
+  /** Roster snapshot for the launcher; refreshed whenever the panel needs it. */
+  private roster: readonly { id: string; name: string }[] = []
+
+  butlerRoster(): readonly { id: string; name: string }[] {
+    if (this.roster.length === 0) void this.refreshButlers().then(rows => { this.roster = rows })
+    return this.roster
+  }
 
   private sendTaskAction(message: object): Promise<void> {
     if (this.taskAction) return Promise.reject(new Error('正在选择任务，请稍候'))
@@ -91,6 +109,29 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
   async startSupervisor(): Promise<void> {
     if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'error') return
     await this.start('voice-supervisor', true)
+  }
+
+  /** Call a named butler instead of the roster default. */
+  async startButler(butlerId: string): Promise<void> {
+    if (this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'error') return
+    this.butlerId = butlerId
+    try {
+      await this.start('voice-supervisor', true)
+    } finally {
+      this.butlerId = undefined
+    }
+  }
+
+  async createButler(name: string): Promise<string> {
+    const response = await fetch(VOICE_BUTLER_ROUTE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!response.ok) throw new Error('新建语音总管失败，请稍后重试。')
+    const created = await response.json() as { id: string }
+    this.roster = await this.refreshButlers()
+    return created.id
   }
 
   async selectTask(taskId: string): Promise<void> {
@@ -402,6 +443,7 @@ export class VoiceCallController implements HostObservable<VoiceSnapshot> {
             playbackDrainAck: true,
           },
           ...(this.supervisorMode ? {} : { target: { sessionId } }),
+          ...(this.supervisorMode && this.butlerId === undefined ? {} : { butlerId: this.butlerId }),
           audio: {
             input: { encoding: 'pcm_s16le', sampleRate: INPUT_SAMPLE_RATE, channels: AUDIO_CHANNELS, frameDurationMs: 40 },
             output: { encoding: 'pcm_s16le', sampleRate: OUTPUT_SAMPLE_RATE, channels: AUDIO_CHANNELS, frameDurationMs: 40 },
